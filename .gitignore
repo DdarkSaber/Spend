@@ -1,0 +1,30 @@
+# private SMS data - never commit
+corpus/
+*.sms.txt
+
+# build
+build/
+.gradle/
+.kotlin/
+out/
+
+# local machine
+local.properties
+.idea/
+*.iml
+
+# signing
+*.jks
+*.keystore
+keystore.properties
+
+# design workspace (contains screenshots taken from a real phone)
+.impeccable/
+
+# never commit SMS data or app databases
+*.db
+*.tsv
+golden*.properties
+
+# internal design notes (personal context)
+PRODUCT.md

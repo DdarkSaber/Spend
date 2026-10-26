@@ -1,0 +1,8 @@
+<resources>
+    <!-- Dark window from the first frame, so there is no white flash before Compose draws. -->
+    <style name="Theme.ExpenseTracker" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/window_bg</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>
