@@ -8,6 +8,7 @@ import com.girish.expensetracker.core.PayeeRules
 import com.girish.expensetracker.core.PayeeType
 import com.girish.expensetracker.core.Source
 import com.girish.expensetracker.core.SourceType
+import com.girish.expensetracker.core.SplitShare
 import com.girish.expensetracker.core.ruleKey
 import java.time.LocalDate
 
@@ -45,8 +46,9 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, 4) {
         if (oldVersion < 4) createStatementRows(db)
     }
 
-    /** v4: rows imported from a bank statement file, for history from before the app was installed. */
+    /** v4: rows imported from a bank statement file, and split payments. */
     private fun createStatementRows(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS split (row_key TEXT PRIMARY KEY, shares TEXT NOT NULL)")
         db.execSQL(
             "CREATE TABLE IF NOT EXISTS stmt (id INTEGER PRIMARY KEY AUTOINCREMENT, bank TEXT NOT NULL, last4 TEXT NOT NULL, " +
                 "type TEXT NOT NULL, day TEXT NOT NULL, amount INTEGER NOT NULL, debit INTEGER NOT NULL, description TEXT NOT NULL, " +
@@ -92,7 +94,34 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, 4) {
             }
         }
 
-    private val tables = listOf("sms", "rule", "manual", "tracked", "settings", "override", "stmt")
+    /** row key ("sms:12", "cash:3") -> other people's shares, stored as JSON. */
+    fun splits(): Map<String, List<SplitShare>> =
+        readableDatabase.rawQuery("SELECT row_key, shares FROM split", null).use { c ->
+            buildMap {
+                while (c.moveToNext()) {
+                    val arr = org.json.JSONArray(c.getString(1))
+                    put(c.getString(0), (0 until arr.length()).map { i ->
+                        val o = arr.getJSONObject(i)
+                        SplitShare(o.getString("name"), o.getLong("paise"), o.optString("label").ifEmpty { null }, o.optBoolean("settled"))
+                    })
+                }
+            }
+        }
+
+    /** An empty list removes the split. */
+    fun setSplit(rowKey: String, shares: List<SplitShare>) {
+        if (shares.isEmpty()) {
+            writableDatabase.delete("split", "row_key = ?", arrayOf(rowKey))
+            return
+        }
+        val arr = org.json.JSONArray()
+        shares.forEach { s ->
+            arr.put(org.json.JSONObject().put("name", s.name).put("paise", s.sharePaise).put("label", s.label ?: "").put("settled", s.settled))
+        }
+        writableDatabase.insertWithOnConflict("split", null, ContentValues().apply { put("row_key", rowKey); put("shares", arr.toString()) }, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    private val tables = listOf("sms", "rule", "manual", "tracked", "settings", "override", "stmt", "split")
 
     /** Every table as JSON rows, for an encrypted backup. */
     fun dump(): org.json.JSONObject = org.json.JSONObject().apply {

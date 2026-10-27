@@ -7,6 +7,9 @@ import com.girish.expensetracker.core.CardHealth
 import com.girish.expensetracker.core.CardStatement
 import com.girish.expensetracker.core.Classifier
 import com.girish.expensetracker.core.Credit
+import com.girish.expensetracker.core.Debt
+import com.girish.expensetracker.core.Owe
+import com.girish.expensetracker.core.SplitShare
 import com.girish.expensetracker.core.Generic
 import com.girish.expensetracker.core.Kind
 import com.girish.expensetracker.core.LimitSeen
@@ -53,6 +56,8 @@ data class Snapshot(
     val statements: List<CardStatement> = emptyList(),
     val limitsSeen: List<LimitSeen> = emptyList(),
     val plan: Plan = Plan(),
+    /** Who still owes the owner money, from loans and splits. */
+    val debts: List<Debt> = emptyList(),
 ) {
     val txns: List<Txn> by lazy { rows.map { it.txn } }
     val todayTotal: Long by lazy { Ledger.today(txns, today) }
@@ -98,6 +103,7 @@ private const val KEY_STATEMENT_DAYS = "statement_days"
 private const val KEY_BUDGET_TOTAL = "budget_total"
 private const val KEY_BUDGETS = "budgets"
 private const val KEY_ALERTS_SENT = "alerts_sent"
+private const val KEY_SETTLED_LOANS = "settled_loans"
 
 class Repo(val store: Store) {
 
@@ -185,6 +191,8 @@ class Repo(val store: Store) {
         val rules = store.rules()
         val ignored = lines(KEY_IGNORED)
         val overrides = store.overrides()
+        val splits = store.splits()
+        val settledLoans = lines(KEY_SETTLED_LOANS)
         val dismissedRent = lines(KEY_RENT_DISMISSED)
         val rentPayees = lines(KEY_RENT).mapNotNull { l -> l.split('|').takeIf { it.size == 2 }?.let { it[0] to (it[1].toLongOrNull() ?: 0L) } }
 
@@ -216,6 +224,9 @@ class Repo(val store: Store) {
                         )
                     }
                     else if (forced == null && rentPayees.any { (label, typical) -> com.girish.expensetracker.core.RentFinder.isRent(t, label, typical) }) t = t.copy(category = "Rent")
+                    splits["sms:${sms.id}"]?.let { t = t.copy(splitWith = it) }
+                    // A loan settled by hand: neither spend nor still owed.
+                    if (t.kind == Kind.LENT && sms.id.toString() in settledLoans) t = t.copy(kind = Kind.REPAID, category = "Lent · settled")
                     rows += Row(t, sms.id, null, sms.body)
                 }
                 is ReadResult.Unparsed -> unparsed += UnparsedSms(sms.id, sms.sender, sms.body, at)
@@ -227,7 +238,8 @@ class Repo(val store: Store) {
         for (m in store.manualSince(since)) {
             val parsed = ParsedSms(Template.MANUAL, Direction.DEBIT, m.amountPaise, CASH, m.note, m.day, null, m.category)
             val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(m.createdAt), zone)
-            rows += Row(Classifier.classify(parsed, at, profile, rules), null, m.id, null)
+            val t = Classifier.classify(parsed, at, profile, rules)
+            rows += Row(splits["cash:${m.id}"]?.let { t.copy(splitWith = it) } ?: t, null, m.id, null)
         }
 
         // Imported statement rows fill history from before the app; a row the SMS already covers is skipped.
@@ -247,7 +259,10 @@ class Repo(val store: Store) {
         rows.sortBy { it.txn.receivedAt }
         // Match by object identity: two real identical SIPs are equal as data but are separate payments.
         val rowByParsed = java.util.IdentityHashMap<ParsedSms, Row>().apply { rows.forEach { put(it.txn.parsed, it) } }
-        val deduped = settleLoans(Dedupe.apply(rows.map { it.txn }).map { kept -> rowByParsed.getValue(kept.parsed).copy(txn = kept) })
+        val kept = Dedupe.apply(rows.map { it.txn }).map { k -> rowByParsed.getValue(k.parsed).copy(txn = k) }
+        // Loans and splits: paybacks from someone who owes money settle it instead of reducing spend.
+        val owe = Owe.settle(kept.map { it.txn })
+        val deduped = kept.zip(owe.txns) { r, t -> r.copy(txn = t) }
 
         return Snapshot(
             rows = deduped,
@@ -259,32 +274,24 @@ class Repo(val store: Store) {
             statements = statements,
             limitsSeen = limits,
             plan = plan(),
+            debts = owe.debts,
         )
     }
 
-    /**
-     * Money marked as lent is not spend; when that person later pays you, the payment settles the loan (shown as
-     * Repaid) instead of reducing your spend. Rows must be in time order.
-     */
-    private fun settleLoans(rows: List<Row>): List<Row> {
-        if (rows.none { it.txn.kind == Kind.LENT }) return rows
-        val labels = rows.filter { it.txn.payeeType == PayeeType.PERSON }.mapNotNull { it.txn.parsed.counterparty }.distinct()
-        val personOf = People.group(labels).flatMap { group -> group.map { it to group.first() } }.toMap()
-        val owed = HashMap<String, Long>()
-        return rows.map { r ->
-            val who = r.txn.parsed.counterparty?.let(personOf::get) ?: return@map r
-            when (r.txn.kind) {
-                Kind.LENT -> { owed[who] = (owed[who] ?: 0L) + r.txn.amountPaise; r }
-                Kind.PERSON_CREDIT -> {
-                    val left = owed[who] ?: 0L
-                    if (left <= 0) r else {
-                        owed[who] = (left - r.txn.amountPaise).coerceAtLeast(0L)
-                        r.copy(txn = r.txn.copy(kind = Kind.REPAID, category = "Repaid"))
-                    }
-                }
-                else -> r
+    /** Row key for splits: SMS rows and cash entries can be split; imported statement rows cannot. */
+    fun rowKey(row: Row): String? = row.smsId?.let { "sms:$it" } ?: row.manualId?.let { "cash:$it" }
+
+    fun setSplit(row: Row, shares: List<SplitShare>) { rowKey(row)?.let { store.setSplit(it, shares) } }
+
+    /** Mark everything [debt]'s person owes as paid (in cash, or anywhere the bank SMS can't see). */
+    fun settleDebt(debt: Debt, rows: List<Row>) {
+        for ((key, shares) in store.splits()) {
+            if (shares.any { it.name == debt.name && it.label == debt.label && !it.settled }) {
+                store.setSplit(key, shares.map { if (it.name == debt.name && it.label == debt.label) it.copy(settled = true) else it })
             }
         }
+        val loans = rows.filter { it.txn.kind == Kind.LENT && it.smsId != null && it.txn.parsed.counterparty == debt.label }.map { it.smsId!! }
+        if (loans.isNotEmpty()) store.setSetting(KEY_SETTLED_LOANS, (lines(KEY_SETTLED_LOANS) + loans.map(Long::toString)).joinToString("\n"))
     }
 
     // ---------------------------------------------------------------- owner's plan: limits, statement days, budgets

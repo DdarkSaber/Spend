@@ -87,10 +87,20 @@ data class Txn(
     val category: String,
     val receivedAt: LocalDateTime,
     val isSalary: Boolean = false,
+    /** The other people's shares when the owner split this payment; only the owner's share counts as spend. */
+    val splitWith: List<SplitShare> = emptyList(),
 ) {
     val day: LocalDate get() = parsed.date ?: receivedAt.toLocalDate()
     val amountPaise: Long get() = parsed.amountPaise
+    /** What this payment costs the owner: the full amount, or their share of a split. */
+    val ownPaise: Long get() = (amountPaise - splitWith.sumOf { it.sharePaise }).coerceAtLeast(0L)
 }
+
+/**
+ * One other person's part of a split payment. [label] is how they appear in bank SMS (a UPI ID or bank name) when
+ * they were picked from People, so their payback is matched exactly; otherwise their [name] is matched loosely.
+ */
+data class SplitShare(val name: String, val sharePaise: Long, val label: String? = null, val settled: Boolean = false)
 
 /** Personal setup: which accounts/cards are real, and which names/VPAs are "me" (self transfers). */
 data class Profile(

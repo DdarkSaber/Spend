@@ -63,7 +63,7 @@ object Ledger {
 
     /** Today X: spends, subscriptions and SIPs count; reimbursements and refunds reduce it; lump-sum investments do not count. */
     fun todayAmount(t: Txn): Long = when (t.kind) {
-        Kind.SPEND, Kind.SUBSCRIPTION, Kind.INVESTMENT_SIP -> t.amountPaise
+        Kind.SPEND, Kind.SUBSCRIPTION, Kind.INVESTMENT_SIP -> t.ownPaise
         Kind.PERSON_CREDIT, Kind.REFUND -> -t.amountPaise
         Kind.INVESTMENT_LUMPSUM, Kind.TRANSFER, Kind.INCOME, Kind.LENT, Kind.REPAID -> 0
     }
