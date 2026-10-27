@@ -60,6 +60,8 @@ data class Subscription(
 
 object Subscriptions {
 
+    private val everyday = setOf("Food", "Groceries", "Fuel", "Transport", "Travel", "Shopping", "People", "Cash", "Personal care", "Rent")
+
     fun find(txns: List<Txn>, today: LocalDate): List<Subscription> {
         val charges = txns.filter {
             (it.kind == Kind.SUBSCRIPTION || it.kind == Kind.SPEND) && it.payeeType != PayeeType.PERSON && !it.parsed.counterparty.isNullOrBlank()
@@ -72,12 +74,12 @@ object Subscriptions {
             val gap = gaps.sorted().getOrNull(gaps.size / 2)
             val monthly = gap != null && gap in 25..35
             val yearly = gap != null && gap in 350..380
-            val similar = sorted.takeLast(3).let { recent -> recent.all { abs(it.amountPaise - last.amountPaise) <= last.amountPaise / 5 } }
-            // A shop is only a subscription when it bills a similar amount on a monthly or yearly rhythm;
-            // a mandate or a subscription-category charge counts from its first payment.
-            // ...and not much more often than once a month (a weekly grocery run is not a subscription).
+            // A mandate or a subscription-category charge counts from its first payment. Anything else must look like a
+            // plan: the same price (within 2%) at least three times on a monthly or yearly rhythm, not much more often
+            // than monthly, and not everyday spending (a favourite restaurant or a weekly grocery run is not a subscription).
+            val samePrice = sorted.takeLast(3).all { abs(it.amountPaise - last.amountPaise) <= last.amountPaise / 50 }
             val notTooOften = sorted.size <= ChronoUnit.DAYS.between(sorted.first().day, last.day) / 20 + 2
-            val recurring = (monthly || yearly) && similar && sorted.size >= 2 && notTooOften
+            val recurring = (monthly || yearly) && samePrice && sorted.size >= 3 && notTooOften && last.category !in everyday
             if (!flagged && !recurring) return@mapNotNull null
             val next = last.day.plusDays(if (yearly) 365 else gap?.takeIf { monthly } ?: 30)
             // Gone quiet for more than one and a half cycles: probably cancelled.

@@ -88,7 +88,11 @@ data class Snapshot(
 
     val budgets: List<BudgetLine> by lazy { Budgets.lines(txns, cycleStart, today, plan.budgetTotal, plan.budgetByCategory) }
 
-    val subscriptions: List<Subscription> by lazy { Subscriptions.find(txns, today) }
+    /** Recurring charges, without loan instalments (those are listed as EMIs). */
+    val subscriptions: List<Subscription> by lazy {
+        val loans = emis.map { com.girish.expensetracker.core.normalizeName(it.name) }.toSet()
+        Subscriptions.find(txns, today).filterNot { com.girish.expensetracker.core.normalizeName(it.name) in loans }
+    }
 
     /** Double charges, unusually large payments and foreign charges from the last week. */
     val unusual: List<Unusual> by lazy { (foreign + UnusualSpend.find(txns, today, money = { com.girish.expensetracker.ui.rupees(it) })).sortedByDescending { it.day } }

@@ -46,6 +46,15 @@ class TeachTest {
         assertEquals(30000L, (r as ReadResult.Parsed).parsed.amountPaise)
     }
 
+    @Test fun noDigitsMeansTheOnlyCardAtThatBank() {
+        val sms = "Refund of INR 499.00 credited to your ICICI Bank Card for DEMO STORE on 24-Oct-26."
+        val text = Teach.normalize(sms)
+        val layout = Teach.learn("ICICI", text, text.indexOf("499.00").let { it until it + 6 }, null, debit = false, card = true)!!
+        val me = Profile(emptySet(), setOf(Source("ICICI", "9999", SourceType.CARD)), emptySet(), emptySet())
+        val r = SmsReader.read("VA-ICICIT-S", sms.replace("499.00", "120.00"), me, listOf(layout))
+        assertEquals(Source("ICICI", "9999", SourceType.CARD), (r as ReadResult.Parsed).parsed.source)
+    }
+
     @Test fun refusesARangeWithNoNumber() {
         assertNull(Teach.learn("X", "hello world 12", 0..4, null, true, false))
     }

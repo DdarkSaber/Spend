@@ -110,6 +110,17 @@ object DemoData {
         list.add(Sms("JM-ICICIT-S", "ICICI Bank Credit Card XX9999 Statement is sent to de***@mail.com. Total of Rs 18,240.00 or minimum of Rs 910.00 is due by ${today.plusDays(2).format(f("dd-MMM-yy")).uppercase()}.", today.minusDays(16).atTime(9, 0)))
         list.add(Sms("AX-MYSBIC-S", "E-statement of SBI Credit Card ending XX11 dated ${today.minusDays(20).format(f("dd/MM/yyyy"))} has been mailed. Total Amt Due Rs 18450; Min Amt Due Rs 930; Payable by ${today.minusDays(1).format(f("dd/MM/yyyy"))}.", today.minusDays(19).atTime(8, 0)))
         list.add(Sms("AD-HDFCBK-S", "DEAR HDFCBANK CARDMEMBER, PAYMENT OF Rs. 12000.00 RECEIVED TOWARDS YOUR CREDIT CARD ENDING WITH 4321 ON ${today.minusDays(9).format(f("d-M-yyyy"))}.YOUR AVAILABLE LIMIT IS RS. 236500.00", today.minusDays(9).atTime(11, 0)))
+        // Worth a look: the same order charged twice minutes apart, and a foreign-currency charge.
+        val dup = today.minusDays(1).atTime(20, 1)
+        hdfcCard(dup, 489, "ZOMATO")
+        hdfcCard(dup.plusMinutes(3), 489, "ZOMATO")
+        list.add(Sms("BP-IDFCFB-S", "Transaction Successful! USD 9.99 spent on your IDFC FIRST Bank Credit Card ending XX7788 at STEAMGAMES on ${today.minusDays(2).format(f("dd-MMM-yyyy")).uppercase()} Avbl Limit: INR 41,250.00", today.minusDays(2).atTime(23, 5)))
+        // A monthly loan EMI on the 5th.
+        var emi = today.withDayOfMonth(5).let { if (it.isAfter(today)) it.minusMonths(1) else it }.minusMonths(3)
+        while (!emi.isAfter(today)) {
+            list.add(Sms("AD-HDFCBK-S", "PAYMENT ALERT! INR 4250.00 deducted from HDFC Bank A/C No 1234 towards BAJAJ FINANCE LTD UMRN: DEMO${emi.monthValue}", emi.atTime(7, 30)))
+            emi = emi.plusMonths(1)
+        }
         // One layout the reader does not know yet, and one card that is not tracked.
         list.add(Sms("VA-ICICIT-S", "Refund of INR 499.00 credited to your ICICI Bank Card for DEMO STORE on ${today.minusDays(3).format(f("dd-MMM-yy"))}.", today.minusDays(3).atTime(18, 30)))
         list.add(Sms("JD-HDFCBK-S", "Spent Rs.250 On HDFC Bank Card 9911 At ..DEMO CAFE_ On ${today.minusDays(5).format(f("yyyy-MM-dd"))}:12:10:00.", today.minusDays(5).atTime(12, 10)))

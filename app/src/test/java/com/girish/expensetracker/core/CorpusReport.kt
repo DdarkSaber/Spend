@@ -39,5 +39,18 @@ class CorpusReport {
             .forEach { (k, v) -> println("PERSONISH $k x${v.size} ${v.sumOf { it.amountPaise } / 100}") }
         Dedupe.apply(txns).filter { it.category == "Uncategorised" }.groupBy { it.parsed.counterparty }
             .forEach { (k, v) -> println("UNCATEGORISED $k x${v.size}") }
+
+        // v0.3 detectors on real data: none of them may invent loans, alerts or subscriptions out of spam.
+        val all = Dedupe.apply(txns)
+        val today = all.maxOf { it.day }
+        val raw = File(path).readLines().map { it.split('\t') }
+        println("EMIS ${Emis.find(all, today).map { "${it.name} ${it.monthlyPaise / 100} x${it.paid}" }}")
+        println("SUBSCRIPTIONS ${Subscriptions.find(all, today).map { "${it.name} ${it.lastPaise / 100}" }}")
+        println("UNUSUAL ${UnusualSpend.find(all, today, money = { "${it / 100}" }, days = 120).map { it.title }}")
+        println("FOREIGN ${raw.mapNotNull { (s, b, ts) -> SmsReader.bankOf(s)?.let { UnusualSpend.foreignCharge(it, b, LocalDateTime.ofInstant(Instant.ofEpochMilli(ts.toLong()), ZoneId.of("Asia/Kolkata"))) } }.map { it.title }}")
+        println("INVESTMENTS ${Investments.holdings(all, today.minusDays(30)).map { "${it.platform} ${it.totalPaise / 100}" }}")
+        // Every bank-sender SMS that mentions a loan or EMI, and what the reader made of it.
+        raw.filter { (s, b, _) -> SmsReader.bankOf(s) != null && Regex("(?i)\\b(emi|loan)\\b").containsMatchIn(b) }
+            .forEach { (s, b, _) -> println("LOANWORD ${SmsReader.read(s, b, p)::class.simpleName} $s | ${b.take(90)}") }
     }
 }

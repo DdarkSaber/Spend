@@ -70,5 +70,6 @@ dependencies {
 tasks.withType<Test>().configureEach {
     systemProperty("corpus", System.getProperty("corpus") ?: "")
     systemProperty("golden", System.getProperty("golden") ?: "")
+    systemProperty("samples", System.getProperty("samples") ?: "")
     testLogging { showStandardStreams = true }
 }

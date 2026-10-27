@@ -54,7 +54,15 @@ internal class AppLock(private val activity: ComponentActivity) {
         if (Build.VERSION.SDK_INT >= 33) activity.setRecentsScreenshotEnabled(!on)
     }
 
+    /** Never crash or strand the owner: if the system prompt can't open, the app opens unlocked. */
     private fun prompt(title: String, onSuccess: () -> Unit) {
+        runCatching { show(title, onSuccess) }.onFailure {
+            locked.value = false
+            Toast.makeText(activity, "Couldn't show the unlock prompt", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun show(title: String, onSuccess: () -> Unit) {
         BiometricPrompt.Builder(activity)
             .setTitle(title)
             .setAllowedAuthenticators(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)

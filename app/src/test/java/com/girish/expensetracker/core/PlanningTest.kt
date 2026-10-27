@@ -139,6 +139,9 @@ class BudgetAndSubscriptionTest {
             spend("2026-10-05", 799, "NETFLIX", cat = "Subscriptions"),
             spend("2026-08-10", 1200, "CULT FIT", cat = "Medical"), spend("2026-09-10", 1200, "CULT FIT", cat = "Medical"),
             spend("2026-10-10", 1200, "CULT FIT", cat = "Medical"),
+            // A favourite restaurant visited about monthly for a similar bill is not a subscription.
+            spend("2026-08-12", 1340, "NANDHANA PALACE", cat = "Food"), spend("2026-09-11", 1374, "NANDHANA PALACE", cat = "Food"),
+            spend("2026-10-12", 1374, "NANDHANA PALACE", cat = "Food"),
         ) + (1..20).map { spend("2026-10-${"%02d".format(it)}", 300 + it * 7L, "BLINKIT", cat = "Groceries") }
         val subs = Subscriptions.find(txns, LocalDate.of(2026, 10, 20))
         assertEquals(listOf("NETFLIX", "CULT FIT"), subs.map { it.name })

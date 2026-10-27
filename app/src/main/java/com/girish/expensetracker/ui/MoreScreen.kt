@@ -104,13 +104,13 @@ internal fun MoreScreen(snap: Snapshot, setup: Setup, isNew: (Row) -> Boolean, o
 
         item {
             Section("Safety") {
-                Toggle(Icons.Outlined.Lock, "App lock", "Fingerprint, face or phone PIN to open", settings.lockOn, settings.onLock)
+                Toggle(Icons.Outlined.Lock, "App lock", "Fingerprint, face or PIN", settings.lockOn, settings.onLock)
                 Hairline()
                 val auto = settings.autoBackup
                 Action(
                     Icons.Outlined.CloudUpload, "Automatic backup",
                     when {
-                        !auto.on -> "Weekly, encrypted, to Google Drive or a folder you pick"
+                        !auto.on -> "Weekly to Google Drive or a folder"
                         auto.lastError != null -> "Last attempt failed: tap to check"
                         auto.lastMillis > 0 -> "Weekly · last ${Instant.ofEpochMilli(auto.lastMillis).atZone(ZoneId.systemDefault()).toLocalDate().format(dayMonth)}"
                         else -> "Weekly"
@@ -119,7 +119,7 @@ internal fun MoreScreen(snap: Snapshot, setup: Setup, isNew: (Row) -> Boolean, o
                     trailing = if (auto.on) ({ Tag(if (auto.lastError != null) "failed" else "on") }) else null,
                 )
                 Hairline()
-                Action(Icons.Outlined.Save, "Back up now", "A password-encrypted file, saved where you choose", actions.backup)
+                Action(Icons.Outlined.Save, "Back up now", "Encrypted file, saved where you choose", actions.backup)
                 Hairline()
                 Action(Icons.Outlined.Restore, "Restore a backup", "Replaces what's in the app now", actions.restore)
             }
@@ -127,19 +127,19 @@ internal fun MoreScreen(snap: Snapshot, setup: Setup, isNew: (Row) -> Boolean, o
 
         item {
             Section("Notifications") {
-                Toggle(Icons.Outlined.NotificationsNone, "Evening summary", "A quiet notification at 9 pm with today's spend", settings.digestOn, settings.onDigest)
+                Toggle(Icons.Outlined.NotificationsNone, "Evening summary", "Quiet 9 pm notification, no sound", settings.digestOn, settings.onDigest)
                 if (!setup.batteryUnrestricted) {
                     Hairline()
-                    Action(Icons.Outlined.Bolt, "Allow running in background", "Keeps the Today · Month notification from being cleared", actions.battery)
+                    Action(Icons.Outlined.Bolt, "Allow running in background", "Keeps the notification from being cleared", actions.battery)
                 }
             }
         }
 
         item {
             Section("Data") {
-                Action(Icons.Outlined.Sms, "Import SMS history", "Re-reads the last ${UserConfig.IMPORT_DAYS} days; nothing is counted twice", actions.importSms)
+                Action(Icons.Outlined.Sms, "Import SMS history", "Re-reads the last ${UserConfig.IMPORT_DAYS} days", actions.importSms)
                 Hairline()
-                Action(Icons.Outlined.UploadFile, "Import bank statement (CSV)", "History from before the app was installed", actions.importStatement)
+                Action(Icons.Outlined.UploadFile, "Import bank statement (CSV)", "History from before the app", actions.importStatement)
                 Hairline()
                 Action(Icons.Outlined.FileDownload, "Export CSV", "Saves to Download/Spend", actions.exportCsv)
             }

@@ -137,9 +137,15 @@ class FilterTest {
     }
 
     @Test fun unknownLayoutGoesToUnparsed() {
-        // No account or card number: nothing to file it under, so it is shown, never guessed.
-        val r = SmsReader.read("VA-ICICIT-S", "Refund of INR 499.00 credited to your ICICI Bank Card for SOMESHOP on 16-Oct-26.", PROFILE)
+        // A foreign-currency charge can't be counted in rupees (the only INR figure is the limit): shown, never guessed.
+        val r = SmsReader.read("VA-ICICIT-S", "USD 11.80 spent using ICICI Bank Card XX9999 on 03-Sep-26 on SOMEAPP. Avl Limit: INR 1,95,899.53.", PROFILE)
         assertTrue("must land in Unparsed: $r", r is ReadResult.Unparsed)
+    }
+
+    @Test fun noCardNumberMeansTheOnlyCardAtThatBank() {
+        val t = txn("VA-ICICIT-S", "Refund of INR 499.00 credited to your ICICI Bank Card for SOMESHOP on 16-Oct-26.")
+        assertEquals(Source("ICICI", "9999", SourceType.CARD), t.parsed.source)
+        assertEquals(Kind.REFUND, t.kind)
     }
 
     @Test fun cardRefundWithNumberIsReadGenerically() {

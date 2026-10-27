@@ -17,7 +17,7 @@ object UnusualSpend {
     fun foreignCharge(bank: String, body: String, at: LocalDateTime): Unusual? {
         val m = foreign.find(body) ?: return null
         if (!spentWords.containsMatchIn(body)) return null
-        return Unusual("fx|${at.toLocalDate()}|${m.value}", "Foreign currency charge: ${m.groupValues[1].uppercase()} ${m.groupValues[2]}",
+        return Unusual("fx|${at.toLocalDate()}|${m.value}", "Foreign charge: ${m.groupValues[1].uppercase()} ${m.groupValues[2]}",
             "On your $bank card or account. Check it's yours; the rupee amount appears on the statement.", at.toLocalDate())
     }
 
@@ -77,10 +77,11 @@ object Emis {
         RegexOption.IGNORE_CASE,
     )
 
+    /** Only a lender's name or the word EMI/LOAN in the bank's own debit SMS counts; a monthly bill or premium is not a loan. */
     fun find(txns: List<Txn>, today: LocalDate): List<Emi> {
         val candidates = txns.filter {
             it.parsed.direction == Direction.DEBIT && it.kind != Kind.TRANSFER && it.kind != Kind.INVESTMENT_SIP && it.kind != Kind.INVESTMENT_LUMPSUM &&
-                (lenderWords.containsMatchIn(it.parsed.counterparty.orEmpty()) || lenderWords.containsMatchIn(it.parsed.narration.orEmpty()) || it.category == "Bills & EMI")
+                (lenderWords.containsMatchIn(it.parsed.counterparty.orEmpty()) || lenderWords.containsMatchIn(it.parsed.narration.orEmpty()))
         }
         return candidates.groupBy { normalizeName(it.parsed.counterparty ?: it.parsed.narration.orEmpty()).take(14) }.mapNotNull { (_, list) ->
             val sorted = list.sortedBy { it.day }
