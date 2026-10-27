@@ -27,6 +27,7 @@ object CardFacts {
     private val I = RegexOption.IGNORE_CASE
 
     private val card = Regex("(?:card|cc)\\s*(?:no\\.?\\s*)?(?:ending\\s*(?:with\\s*)?)?[xX*]*\\s*(\\d{2,4})\\b", I)
+    private val reminder = Regex("overdue|over due|past due|not been received|not received your payment|late fee|late payment|pay now|reminder", I)
     private val isStatement = Regex("statement|total (?:amt|amount) due|total of rs|total due", I)
     private val dated = Regex("(?:dated|statement date:?|generated on)\\s*$DATE", I)
     private val total = Regex("(?:total\\s*(?:amt\\.?|amount)?\\s*due|total of|total due)\\s*:?\\s*(?:rs\\.?|inr|₹)\\s*$AMT", I)
@@ -38,6 +39,8 @@ object CardFacts {
         val bank = SmsReader.bankOf(sender) ?: return null
         val text = body.replace(Regex("\\s+"), " ")
         if (!isStatement.containsMatchIn(text) || !Regex("card", I).containsMatchIn(text)) return null
+        // An overdue or "pay now" reminder repeats the bill; reading it as a new statement would move the statement date.
+        if (reminder.containsMatchIn(text)) return null
         // "update your email to get the statement" and similar: no date, no amount, nothing to learn.
         val totalDue = total.find(text)?.let { paise(it.groupValues[1]) }
         val generated = Regex("statement (?:is )?(?:generated|sent|has been (?:mailed|sent|generated))|statement generated|e-statement of", I).containsMatchIn(text)

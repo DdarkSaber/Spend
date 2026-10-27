@@ -1,0 +1,2 @@
+• Bill reminders and overdue notices ("minimum due", "overdue", "pay now") are never counted as payments
+• Trends: tap a month to see its categories and payments

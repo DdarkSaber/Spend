@@ -91,6 +91,10 @@ object SmsReader {
         // Statements, reminders and duplicate confirmations: no new money moved.
         "statement", "will be deducted", "will auto-debit", "has been mailed",
         "we have successfully debited your hdfc bank credit card ending",
+        // Bill reminders and overdue notices: they quote the amount due, but nothing has been paid or sent.
+        "overdue", "over due", "past due", "minimum due", "min due", "minimum amount due", "min. amount due", "total amount due",
+        "amount due", "not been received", "not received your payment", "not been paid", "unpaid", "late payment", "late fee",
+        "pay now", "payment is due", "payment due", "due date", "is due on", "is due by", "kindly pay", "please pay",
     )
 
     private val looksTransactional = Regex(

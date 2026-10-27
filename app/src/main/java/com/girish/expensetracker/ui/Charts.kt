@@ -1,5 +1,8 @@
 package com.girish.expensetracker.ui
 
+import com.girish.expensetracker.data.Row
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.clickable
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
@@ -256,7 +259,7 @@ fun DonutChart(slices: List<Pair<String, Long>>, total: Long, selected: String?,
 /** One stacked bar per salary month (newest on the right), split by the biggest categories plus Other. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun MonthsBars(snap: Snapshot, withInvestments: Boolean) {
+fun MonthsBars(snap: Snapshot, withInvestments: Boolean, isNew: (Row) -> Boolean = { false }, onRow: (Row) -> Unit = {}) {
     val t = LocalTones.current
     val cycles = remember(snap) { Ledger.cycles(snap.today, snap.txns, 4).reversed() }
     val perCycle = remember(snap, withInvestments) {
@@ -268,6 +271,9 @@ fun MonthsBars(snap: Snapshot, withInvestments: Boolean) {
     val totals = stacks.map { s -> s.sumOf { it.second } }
     val maxTotal = (totals.maxOrNull() ?: 0L).coerceAtLeast(1L)
     val progress = drawIn(withInvestments)
+    // Tap a month (bar or label) to open it below; tap it again to close.
+    var picked by remember(snap) { mutableStateOf<Int?>(null) }
+    fun pick(i: Int) { picked = if (picked == i) null else i }
 
     Panel {
         PanelHeader("Last four salary months", "from the ${Ledger.salaryDay}${if (Ledger.salaryDay in 11..13) "th" else when (Ledger.salaryDay % 10) { 1 -> "st"; 2 -> "nd"; 3 -> "rd"; else -> "th" }}")
@@ -281,7 +287,11 @@ fun MonthsBars(snap: Snapshot, withInvestments: Boolean) {
             }
         }
         Gap(8.dp)
-        Canvas(Modifier.fillMaxWidth().height(150.dp).semantics { contentDescription = "Spend per salary month: " + totals.joinToString { rupees(it) } }) {
+        Canvas(
+            Modifier.fillMaxWidth().height(150.dp)
+                .semantics { contentDescription = "Spend per salary month: " + totals.joinToString { rupees(it) } + ". Tap a month to see its payments." }
+                .pointerInput(stacks.size) { detectTapGestures { o -> pick((o.x / (size.width.toFloat() / stacks.size)).toInt().coerceIn(0, stacks.lastIndex)) } },
+        ) {
             val slot = size.width / stacks.size
             val barW = minOf(slot * 0.42f, 44.dp.toPx())
             drawLine(t.hairline, Offset(0f, size.height), Offset(size.width, size.height), strokeWidth = 1f)
@@ -292,7 +302,8 @@ fun MonthsBars(snap: Snapshot, withInvestments: Boolean) {
                 nonEmpty.forEachIndexed { k, (cat, amt) ->
                     val hgt = size.height * amt / maxTotal * progress
                     val top = yy - hgt
-                    val color = if (cat == "Other") OtherPaint else paintFor(cat)
+                    val base = if (cat == "Other") OtherPaint else paintFor(cat)
+                    val color = if (picked != null && picked != b) base.copy(alpha = 0.3f) else base
                     val isTop = k == nonEmpty.lastIndex
                     drawRoundRect(color, Offset(left, top + if (k > 0) 1.dp.toPx() else 0f), Size(barW, hgt - if (k > 0) 1.dp.toPx() else 0f),
                         cornerRadius = CornerRadius(if (isTop) 4.dp.toPx() else 1.dp.toPx()))
@@ -305,7 +316,8 @@ fun MonthsBars(snap: Snapshot, withInvestments: Boolean) {
             cycles.forEachIndexed { k, r ->
                 Text(
                     if (k == cycles.lastIndex) "NOW" else cycleMonth(r.start).uppercase(),
-                    style = DataLabel, color = t.ink3, modifier = Modifier.weight(1f), textAlign = TextAlign.Center,
+                    style = DataLabel, color = if (picked == k) t.accent else t.ink3, textAlign = TextAlign.Center,
+                    modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).clickable { pick(k) }.padding(vertical = 6.dp),
                 )
             }
         }
@@ -317,6 +329,49 @@ fun MonthsBars(snap: Snapshot, withInvestments: Boolean) {
                     Spacer(Modifier.width(6.dp))
                     Text(cat, style = MaterialTheme.typography.labelMedium, color = t.ink2)
                 }
+            }
+        }
+        val open = picked
+        if (open == null) {
+            Text("Tap a month to see its payments", style = MaterialTheme.typography.labelMedium, color = t.ink3, modifier = Modifier.padding(top = 12.dp))
+        } else {
+            Gap(14.dp)
+            Hairline()
+            MonthDetail(snap, cycles[open], withInvestments, isNew, onRow)
+        }
+    }
+}
+
+/** One salary month opened from the bars: its total, then categories that expand into their payments. */
+@Composable
+private fun MonthDetail(snap: Snapshot, range: ClosedRange<java.time.LocalDate>, withInvestments: Boolean, isNew: (Row) -> Boolean, onRow: (Row) -> Unit) {
+    val t = LocalTones.current
+    val rows = remember(snap, range, withInvestments) {
+        snap.rows.filter { it.txn.day in range && Ledger.monthAmount(it.txn) != 0L && (withInvestments || it.txn.category != "Investment") }
+    }
+    val byCat = rows.groupBy { it.txn.category }.mapValues { (_, r) -> r.sumOf { Ledger.monthAmount(it.txn) } }.toList().sortedByDescending { it.second }
+    var openCat by remember(range) { mutableStateOf<String?>(null) }
+    val fmt = java.time.format.DateTimeFormatter.ofPattern("d MMM", java.util.Locale.ENGLISH)
+    Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(cycleMonth(range.start) + " salary month", style = MaterialTheme.typography.titleSmall, color = t.ink)
+            Text("${range.start.format(fmt)} – ${range.endInclusive.format(fmt)} · ${count(rows.size, "payment")}", style = MaterialTheme.typography.bodySmall, color = t.ink2)
+        }
+        Text(rupees(byCat.sumOf { it.second }), style = AmountStyle, color = t.ink)
+    }
+    byCat.forEach { (cat, amt) ->
+        Column {
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { openCat = if (openCat == cat) null else cat }.padding(vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Swatch(paintFor(cat)); Spacer(Modifier.width(8.dp))
+                Text(cat, style = MaterialTheme.typography.bodyMedium, color = t.ink, modifier = Modifier.weight(1f))
+                Text(rupees(amt), style = AmountStyle, color = if (amt < 0) t.good else t.ink)
+                Text(if (openCat == cat) "  ▴" else "  ▾", style = MaterialTheme.typography.bodySmall, color = t.ink3)
+            }
+            if (openCat == cat) {
+                rows.filter { it.txn.category == cat }.sortedByDescending { it.txn.amountPaise }.forEach { TxnRow(it, isNew(it), onRow, showDate = true) }
             }
         }
     }

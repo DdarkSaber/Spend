@@ -149,7 +149,7 @@ internal fun MonthScreen(
             }
         }
         if (view == 1) {
-            item { MonthsBars(snap, withInvestments) }
+            item { MonthsBars(snap, withInvestments, isNew, onRow) }
             item { SavingsPanel(snap.savings) }
             item { YearPanel(snap) }
         }

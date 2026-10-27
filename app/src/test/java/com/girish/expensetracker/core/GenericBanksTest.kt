@@ -184,6 +184,21 @@ class GenericBanksTest {
         assertEquals(null, read("VM-UCOBNK-S", "A/c XX1234 Credited with Rs.2,000.00 on 21-09-2025 by UCO-UPI.Avl Bal Rs.11111.11.").counterparty)
     }
 
+    @Test fun overdueAndMinimumDueRemindersAreNeverTransactions() {
+        val open = Profile(emptySet(), emptySet(), emptySet(), emptySet(), acceptAll = true)
+        listOf(
+            "VM-ICICIT-S" to "Dear Customer, payment of Rs 307.00 on your ICICI Bank Credit Card XX9999 is overdue. Please pay immediately to avoid late fee.",
+            "VM-ICICIT-S" to "ICICI Bank Credit Card XX9999: Minimum Amount Due of INR 307.00 is overdue. Pay now at https://x.y",
+            "VM-ICICIT-S" to "Reminder: Your ICICI Bank Credit Card XX9999 payment of Rs.307 was due on 21-OCT-26. Kindly pay the minimum due Rs.307 to avoid charges.",
+            "VM-ICICIT-S" to "We have not received your payment of Rs 307.00 towards your ICICI Bank Credit Card XX9999. Please pay now.",
+            "VM-HDFCBK-S" to "Payment of Rs 4,500 sent for your HDFC Bank Credit Card XX4321 is due by 05-11-2026. Minimum due Rs 230.",
+        ).forEach { (sender, body) ->
+            val r = SmsReader.read(sender, body, open)
+            assertTrue("must not count: $r for $body", r !is ReadResult.Parsed)
+            assertEquals(body, null, CardFacts.statement(sender, body, LocalDateTime.of(2026, 10, 25, 9, 0)))
+        }
+    }
+
     @Test fun knownBanksStillUseExactLayouts() {
         assertEquals(Template.HDFC_UPI_SENT, read("VM-HDFCBK-T", "Sent Rs.135.34 From HDFC Bank A/C *1234 To RAVI KUMAR On 25/10/26 Ref 100000000001 Not You?").template)
         assertEquals("AXIS", SmsReader.bankOf("VM-AXISBK-S"))

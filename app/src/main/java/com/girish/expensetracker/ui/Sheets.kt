@@ -54,7 +54,7 @@ import java.time.LocalDate
 // ---------------------------------------------------------------- rows & sheets
 
 @Composable
-internal fun TxnRow(row: Row, isNew: Boolean, onClick: (Row) -> Unit) {
+internal fun TxnRow(row: Row, isNew: Boolean, onClick: (Row) -> Unit, showDate: Boolean = false) {
     val t = LocalTones.current
     val x = row.txn
     val month = Ledger.monthAmount(x)
@@ -68,7 +68,7 @@ internal fun TxnRow(row: Row, isNew: Boolean, onClick: (Row) -> Unit) {
     }
     ListRow(
         title = name,
-        subtitle = "${x.category} · ${sourceLabel(x.parsed.source)} · ${x.receivedAt.toLocalTime().withSecond(0).withNano(0)}$note",
+        subtitle = "${x.category} · ${sourceLabel(x.parsed.source)} · ${if (showDate) x.day.format(dayMonth) else x.receivedAt.toLocalTime().withSecond(0).withNano(0).toString()}$note",
         leading = {
             Box(Modifier.size(36.dp).clip(CircleShape).background(t.section), contentAlignment = Alignment.Center) {
                 Box(Modifier.size(10.dp).clip(CircleShape).background(if (counted) paintFor(x.category) else t.edge))
