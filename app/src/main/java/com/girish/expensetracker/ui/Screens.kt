@@ -55,6 +55,11 @@ import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material.icons.outlined.PieChart
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
 import androidx.compose.material.icons.outlined.Sms
+import androidx.compose.material.icons.outlined.Savings
+import androidx.compose.material.icons.outlined.UploadFile
+import androidx.compose.material.icons.outlined.Lock
+import androidx.compose.material.icons.outlined.Restore
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -155,6 +160,8 @@ fun AppRoot(
     onRequestPermissions: () -> Unit,
     onOpenBatterySettings: () -> Unit,
     onOpenAppSettings: () -> Unit,
+    theme: String = "system",
+    onTheme: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
     val repo = (context.applicationContext as SpendApp).repo
@@ -169,9 +176,67 @@ fun AppRoot(
     var seenBefore by remember { mutableLongStateOf(Long.MAX_VALUE) }
     var openPerson by remember { mutableStateOf<String?>(null) }
     var reviewing by remember { mutableStateOf(false) }
+    var splitting by remember { mutableStateOf<Row?>(null) }
+    var pickedContact by remember { mutableStateOf<String?>(null) }
+    var cardSettings by remember { mutableStateOf<com.girish.expensetracker.core.CardHealth?>(null) }
+    var editingBudgets by remember { mutableStateOf(false) }
+    var searching by remember { mutableStateOf(false) }
+    var backupMode by remember { mutableStateOf<String?>(null) } // "save" or "restore": asking for the password
+    var password by remember { mutableStateOf<CharArray?>(null) }
+    var csv by remember { mutableStateOf<com.girish.expensetracker.core.StatementCsv.Result?>(null) }
 
     fun reload() { reloadKey++ }
     fun say(msg: String) { scope.launch { snackbar.showSnackbar(msg) } }
+
+    // System pickers: no storage or contacts permission is needed for a file or contact the owner picks.
+    val pickContact = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.PickContact()) { uri ->
+        if (uri != null) scope.launch {
+            pickedContact = withContext(Dispatchers.IO) {
+                runCatching {
+                    context.contentResolver.query(uri, arrayOf(android.provider.ContactsContract.Contacts.DISPLAY_NAME), null, null, null)
+                        ?.use { c -> if (c.moveToFirst()) c.getString(0) else null }
+                }.getOrNull()
+            }
+        }
+    }
+    val saveBackup = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+        val pw = password
+        password = null
+        if (uri != null && pw != null) scope.launch {
+            val msg = withContext(Dispatchers.IO) {
+                runCatching { context.contentResolver.openOutputStream(uri)!!.use { com.girish.expensetracker.data.Backup.write(repo.store, pw, it) }; "Backup saved. Keep the password safe." }
+                    .getOrElse { "Couldn't save the backup: ${it.message}" }
+            }
+            pw.fill(' ')
+            say(msg)
+        }
+    }
+    val openBackup = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        val pw = password
+        password = null
+        if (uri != null && pw != null) scope.launch {
+            val msg = withContext(Dispatchers.IO) {
+                runCatching { context.contentResolver.openInputStream(uri)!!.use { com.girish.expensetracker.data.Backup.read(repo.store, pw, it) }; "Backup restored" }
+                    .getOrElse { if (it is com.girish.expensetracker.data.Backup.WrongPassword) "Wrong password, or not a Spend backup" else "Couldn't restore: ${it.message}" }
+            }
+            pw.fill(' ')
+            say(msg)
+            reload()
+        }
+    }
+    var csvRows by remember { mutableStateOf<List<com.girish.expensetracker.core.CsvRow>>(emptyList()) }
+    val openCsv = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) scope.launch {
+            val r = withContext(Dispatchers.IO) {
+                runCatching { com.girish.expensetracker.core.StatementCsv.parse(context.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() }) }.getOrNull()
+            }
+            when {
+                r == null -> say("Couldn't read that file")
+                r.problem != null -> say(r.problem)
+                else -> { csvRows = r.rows; csv = r }
+            }
+        }
+    }
 
     // First run: once SMS permission is granted and nothing is stored yet, import recent history automatically.
     LaunchedEffect(setup.sms) {
@@ -195,8 +260,9 @@ fun AppRoot(
             row.txn.receivedAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli() > seenBefore
     }
 
-    androidx.activity.compose.BackHandler(enabled = openPerson != null) { openPerson = null }
-    androidx.activity.compose.BackHandler(enabled = openPerson == null && tab != Tab.DAYS) { tab = Tab.DAYS }
+    androidx.activity.compose.BackHandler(enabled = searching) { searching = false }
+    androidx.activity.compose.BackHandler(enabled = !searching && openPerson != null) { openPerson = null }
+    androidx.activity.compose.BackHandler(enabled = !searching && openPerson == null && tab != Tab.DAYS) { tab = Tab.DAYS }
     SpendShell(
         tab = tab, onTab = { tab = it }, showNav = setup.ready, snackbar = snackbar,
         fab = null,
@@ -207,6 +273,7 @@ fun AppRoot(
             s == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text("Reading your bank SMS…", color = LocalTones.current.ink2)
             }
+            searching -> SearchScreen(s, isNew, onBack = { searching = false }) { editing = it }
             openPerson != null && people(s).any { it.key == openPerson } -> PersonScreen(
                 snap = s, person = people(s).first { it.key == openPerson }, onBack = { openPerson = null }, onRow = { editing = it },
                 onMarkShop = { p ->
@@ -228,7 +295,7 @@ fun AppRoot(
                 when (current) {
                     Tab.DAYS -> DaysScreen(
                         s, isNew, onRow = { editing = it },
-                        onCash = { addingCash = true }, onMore = { tab = Tab.MORE }, onReview = { reviewing = true },
+                        onCash = { addingCash = true }, onMore = { tab = Tab.MORE }, onReview = { reviewing = true }, onSearch = { searching = true },
                         onLoadDemo = if (BuildConfig.DEBUG) ({
                             scope.launch {
                                 val n = withContext(Dispatchers.IO) { repo.loadDemo() }
@@ -238,7 +305,7 @@ fun AppRoot(
                         }) else null,
                     )
                     Tab.MONTH -> MonthScreen(
-                        s, isNew,
+                        s, isNew, onBudgets = { editingBudgets = true },
                         onRent = { c, yes ->
                             scope.launch {
                                 withContext(Dispatchers.IO) { if (yes) repo.markRent(c) else repo.dismissRent(c) }
@@ -247,8 +314,17 @@ fun AppRoot(
                             }
                         },
                     ) { editing = it }
-                    Tab.CARDS -> CardsScreen(s, isNew) { editing = it }
-                    Tab.PEOPLE -> PeopleScreen(s) { openPerson = it.key }
+                    Tab.CARDS -> CardsScreen(s, isNew, onCardSettings = { cardSettings = it }) { editing = it }
+                    Tab.PEOPLE -> PeopleScreen(
+                        s,
+                        onSettle = { d ->
+                            scope.launch {
+                                withContext(Dispatchers.IO) { repo.settleDebt(d, s.rows) }
+                                say("${d.name} is settled")
+                                reload()
+                            }
+                        },
+                    ) { openPerson = it.key }
                     Tab.MORE -> MoreScreen(
                         snap = s, setup = setup, isNew = isNew, onRow = { editing = it },
                         onImport = {
@@ -277,6 +353,11 @@ fun AppRoot(
                         },
                         onOpenBatterySettings = onOpenBatterySettings,
                         onReviewSetup = { reviewing = true },
+                        onBudgets = { editingBudgets = true },
+                        onBackup = { backupMode = "save" },
+                        onRestore = { backupMode = "restore" },
+                        onImportStatement = { openCsv.launch(arrayOf("text/*", "application/vnd.ms-excel", "application/octet-stream")) },
+                        theme = theme, onTheme = onTheme,
                     )
                 }
             }
@@ -306,7 +387,69 @@ fun AppRoot(
                     reload()
                 }
             },
+            onSplit = { editing = null; splitting = row },
         )
+    }
+    splitting?.let { row ->
+        SplitSheet(
+            row = row,
+            people = snap?.let { people(it) }.orEmpty(),
+            pickedContact = pickedContact,
+            onPickContact = { pickContact.launch(null) },
+            onContactUsed = { pickedContact = null },
+            onDismiss = { splitting = null },
+            onSave = { shares ->
+                scope.launch {
+                    withContext(Dispatchers.IO) { repo.setSplit(row, shares) }
+                    splitting = null
+                    say(if (shares.isEmpty()) "Split removed" else "Split with ${shares.joinToString { it.name }} · your share ${rupees(row.txn.amountPaise - shares.sumOf { it.sharePaise })}")
+                    reload()
+                }
+            },
+        )
+    }
+    cardSettings?.let { h ->
+        CardSettingsSheet(h, onDismiss = { cardSettings = null }) { limit, day ->
+            scope.launch {
+                withContext(Dispatchers.IO) { repo.setCardLimit(h.card, limit); repo.setStatementDay(h.card, day) }
+                cardSettings = null
+                say("Saved ${sourceLabel(h.card)}")
+                reload()
+            }
+        }
+    }
+    if (editingBudgets) snap?.let { s ->
+        BudgetSheet(s.plan, used = Ledger.byCategory(s.txns, s.today).filterValues { it > 0 }.keys.sorted(), onDismiss = { editingBudgets = false }) { total, perCat ->
+            scope.launch {
+                withContext(Dispatchers.IO) {
+                    repo.setBudget(null, total)
+                    perCat.forEach { (c, v) -> repo.setBudget(c, v) }
+                }
+                editingBudgets = false
+                say("Budgets saved")
+                reload()
+            }
+        }
+    }
+    backupMode?.let { mode ->
+        PasswordSheet(restoring = mode == "restore", onDismiss = { backupMode = null }) { pw ->
+            password = pw
+            backupMode = null
+            if (mode == "save") saveBackup.launch("spend-backup-${LocalDate.now()}.spendbackup") else openBackup.launch(arrayOf("*/*"))
+        }
+    }
+    csv?.let { r ->
+        val sources = snap?.owner?.tracked?.filter { it.last4 != "*" }?.sortedBy { sourceLabel(it) }.orEmpty()
+        ImportSheet(r.rows.size, r.skipped, sources, onDismiss = { csv = null }) { src ->
+            scope.launch {
+                val added = withContext(Dispatchers.IO) {
+                    repo.store.addStatementRows(src, csvRows.map { com.girish.expensetracker.data.StatementRow(it.day, it.amountPaise, it.debit, it.description) })
+                }
+                csv = null
+                say("Imported ${count(added, "new row")} into ${sourceLabel(src)}")
+                reload()
+            }
+        }
     }
     val owner = snap?.owner
     if (reviewing && owner != null) {
@@ -399,7 +542,7 @@ internal fun CashFab(onClick: () -> Unit) {
 }
 
 @Composable
-private fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
+internal fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, enabled: Boolean = true) {
     val t = LocalTones.current
     Button(
         onClick = onClick, enabled = enabled, shape = RoundedCornerShape(10.dp),
@@ -409,7 +552,7 @@ private fun PrimaryButton(text: String, onClick: () -> Unit, modifier: Modifier 
 }
 
 @Composable
-private fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+internal fun SecondaryButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val t = LocalTones.current
     OutlinedButton(
         onClick = onClick, shape = RoundedCornerShape(10.dp),
@@ -435,6 +578,23 @@ internal fun SetupScreen(setup: Setup, onRequest: () -> Unit, onAppSettings: () 
         }
         item {
             Panel {
+                PanelHeader("How it works")
+                listOf(
+                    "1" to "Your bank already texts you every payment. Spend reads those SMS: UPI, cards, salary, refunds.",
+                    "2" to "It works out what counts: card bills, transfers between your own accounts and repeats are left out.",
+                    "3" to "“Today · Month” stays in your notification shade. Everything else is one tap away.",
+                ).forEach { (n, text) ->
+                    Row(Modifier.padding(vertical = 6.dp), verticalAlignment = Alignment.Top) {
+                        Text(n, style = DataLabel, color = t.accent, modifier = Modifier.width(22.dp).padding(top = 3.dp))
+                        Text(text, style = MaterialTheme.typography.bodyMedium, color = t.ink2)
+                    }
+                }
+                Gap(6.dp)
+                Text("No internet permission, no account, no ads. Your SMS never leave the phone.", style = MaterialTheme.typography.labelMedium, color = t.ink)
+            }
+        }
+        item {
+            Panel {
                 Step(setup.sms, "Allow SMS", "Reads bank transaction messages as they arrive, and imports the last ${UserConfig.IMPORT_DAYS} days once.")
                 Hairline()
                 Step(setup.notifications, "Allow notifications", "Keeps “Today · Month” pinned in your notification shade.")
@@ -446,7 +606,7 @@ internal fun SetupScreen(setup: Setup, onRequest: () -> Unit, onAppSettings: () 
         if (!setup.batteryUnrestricted) item { SecondaryButton("Allow running in background", onBattery, Modifier.fillMaxWidth()) }
         item {
             Text(
-                "If Android blocks SMS access for an app not from the Play Store: App info → ⋮ → Allow restricted settings, then grant again.",
+                "SMS greyed out or blocked? Android restricts it for apps installed outside the Play Store: open App info, tap ⋮ (top right), choose “Allow restricted settings”, then tap Grant permissions again.",
                 style = MaterialTheme.typography.bodySmall, color = t.ink3,
             )
             TextButton(onClick = onAppSettings) { Text("Open App info", color = t.accent) }
@@ -481,6 +641,7 @@ internal fun DaysScreen(
     onCash: () -> Unit = {},
     onMore: () -> Unit = {},
     onReview: () -> Unit = {},
+    onSearch: () -> Unit = {},
 ) {
     val t = LocalTones.current
     var range by remember { mutableStateOf(0) } // 0 = 7 days, 1 = salary month, 2 = 4 months
@@ -502,6 +663,7 @@ internal fun DaysScreen(
                     Modifier.clip(CircleShape).border(1.dp, t.accent.copy(alpha = 0.35f), CircleShape).padding(4.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
+                    RoundIcon(Icons.Outlined.Search, "Search payments", onSearch, size = 38.dp)
                     RoundIcon(Icons.Filled.Add, "Add cash spend", onCash, size = 38.dp)
                     RoundIcon(Icons.Filled.MoreHoriz, "More", onMore, size = 38.dp)
                 }
@@ -694,7 +856,7 @@ private fun EmptyLedger(onLoadDemo: (() -> Unit)?) {
     Panel {
         Text("No bank SMS yet", style = MaterialTheme.typography.titleLarge, color = t.ink)
         Text(
-            "Spends appear here the moment HDFC, SBI, DCB or ICICI send a transaction SMS. Older messages are imported once from the last ${UserConfig.IMPORT_DAYS} days.",
+            "Spends appear here the moment your bank sends a transaction SMS. Older messages are imported once from the last ${UserConfig.IMPORT_DAYS} days.",
             style = MaterialTheme.typography.bodyMedium, color = t.ink2, modifier = Modifier.padding(top = 6.dp),
         )
         if (onLoadDemo != null) {
@@ -707,7 +869,13 @@ private fun EmptyLedger(onLoadDemo: (() -> Unit)?) {
 // ---------------------------------------------------------------- month
 
 @Composable
-internal fun MonthScreen(snap: Snapshot, isNew: (Row) -> Boolean, onRent: (com.girish.expensetracker.core.RentCandidate, Boolean) -> Unit = { _, _ -> }, onRow: (Row) -> Unit) {
+internal fun MonthScreen(
+    snap: Snapshot,
+    isNew: (Row) -> Boolean,
+    onBudgets: () -> Unit = {},
+    onRent: (com.girish.expensetracker.core.RentCandidate, Boolean) -> Unit = { _, _ -> },
+    onRow: (Row) -> Unit,
+) {
     val t = LocalTones.current
     var withInvestments by remember { mutableStateOf(true) }
     var selected by remember { mutableStateOf<String?>(null) }
@@ -725,6 +893,7 @@ internal fun MonthScreen(snap: Snapshot, isNew: (Row) -> Boolean, onRent: (com.g
     LazyColumn(Modifier.fillMaxSize(), contentPadding = screenPadding, verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { ScreenTitle("Month", "Salary month since ${snap.cycleStart.format(dayMonth)}") }
         item { SalaryCard(snap) }
+        item { BudgetPanel(snap.budgets, onBudgets) }
         snap.rentCandidates.forEach { c -> item { RentCard(c, onMark = { onRent(c, true) }, onDismiss = { onRent(c, false) }) } }
         if (snap.rows.isNotEmpty()) item { PaceChart(snap) }
         item {
@@ -798,6 +967,8 @@ internal fun MonthScreen(snap: Snapshot, isNew: (Row) -> Boolean, onRent: (com.g
             }
         }
         item { MonthsBars(snap, withInvestments) }
+        if (snap.subscriptions.isNotEmpty()) item { SubscriptionsPanel(snap.subscriptions) }
+        item { YearPanel(snap) }
     }
 }
 
@@ -878,7 +1049,12 @@ private fun RentCard(c: com.girish.expensetracker.core.RentCandidate, onMark: ()
 // ---------------------------------------------------------------- cards & accounts
 
 @Composable
-internal fun CardsScreen(snap: Snapshot, isNew: (Row) -> Boolean, onRow: (Row) -> Unit) {
+internal fun CardsScreen(
+    snap: Snapshot,
+    isNew: (Row) -> Boolean,
+    onCardSettings: (com.girish.expensetracker.core.CardHealth) -> Unit = {},
+    onRow: (Row) -> Unit,
+) {
     val t = LocalTones.current
     var view by remember { mutableStateOf(0) } // 0 = credit cards, 1 = bank accounts
     val type = if (view == 0) SourceType.CARD else SourceType.ACCOUNT
@@ -891,6 +1067,8 @@ internal fun CardsScreen(snap: Snapshot, isNew: (Row) -> Boolean, onRow: (Row) -
     LazyColumn(Modifier.fillMaxSize(), contentPadding = screenPadding, verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { ScreenTitle("Cards & accounts", "Spend since ${start.format(dayMonth)}") }
         item { Segmented(listOf("Credit cards", "Bank accounts"), view, { view = it; open = null }) }
+        // Utilisation and bills first: the number that moves your credit score.
+        if (view == 0) snap.cards.forEach { h -> item { CardHealthPanel(h) { onCardSettings(h) } } }
         item {
             Panel(padding = PaddingValues(start = 18.dp, end = 18.dp, top = 8.dp, bottom = 8.dp)) {
                 if (bySource.isEmpty()) {
@@ -953,6 +1131,12 @@ internal fun MoreScreen(
     onTrack: (Source) -> Unit,
     onOpenBatterySettings: () -> Unit,
     onReviewSetup: () -> Unit = {},
+    onBudgets: () -> Unit = {},
+    onBackup: () -> Unit = {},
+    onRestore: () -> Unit = {},
+    onImportStatement: () -> Unit = {},
+    theme: String = "system",
+    onTheme: (String) -> Unit = {},
 ) {
     val t = LocalTones.current
     val moneyIn = snap.rows.filter { it.txn.kind == Kind.INCOME }.sortedByDescending { it.txn.receivedAt }
@@ -977,11 +1161,25 @@ internal fun MoreScreen(
                 Hairline()
                 Action(Icons.Outlined.Sms, "Import SMS history", "Re-reads the last ${UserConfig.IMPORT_DAYS} days; nothing is counted twice", onImport)
                 Hairline()
+                Action(Icons.Outlined.Savings, "Budgets", "Monthly and per category, with alerts", onBudgets)
+                Hairline()
+                Action(Icons.Outlined.UploadFile, "Import bank statement (CSV)", "Adds history from before the app was installed", onImportStatement)
+                Hairline()
                 Action(Icons.Outlined.FileDownload, "Export CSV", "Saves to Download/Spend", onExport)
+                Hairline()
+                Action(Icons.Outlined.Lock, "Back up", "Password-encrypted file, saved where you choose", onBackup)
+                Hairline()
+                Action(Icons.Outlined.Restore, "Restore a backup", "Replaces what's in the app now", onRestore)
                 if (!setup.batteryUnrestricted) {
                     Hairline()
                     Action(Icons.Outlined.Bolt, "Allow running in background", "Keeps the notification from being cleared", onOpenBatterySettings)
                 }
+            }
+        }
+        item {
+            Panel {
+                PanelHeader("Appearance")
+                ThemePicker(theme, onTheme)
             }
         }
         if (snap.newSources.isNotEmpty()) item {
@@ -1027,7 +1225,7 @@ internal fun MoreScreen(
 // ---------------------------------------------------------------- rows & sheets
 
 @Composable
-private fun TxnRow(row: Row, isNew: Boolean, onClick: (Row) -> Unit) {
+internal fun TxnRow(row: Row, isNew: Boolean, onClick: (Row) -> Unit) {
     val t = LocalTones.current
     val x = row.txn
     val month = Ledger.monthAmount(x)
@@ -1066,7 +1264,7 @@ private fun TxnRow(row: Row, isNew: Boolean, onClick: (Row) -> Unit) {
 }
 
 @Composable
-private fun chipColors() = LocalTones.current.let { t ->
+internal fun chipColors() = LocalTones.current.let { t ->
     FilterChipDefaults.filterChipColors(
         containerColor = t.section, labelColor = t.ink2,
         selectedContainerColor = t.accentSoft, selectedLabelColor = t.ink,
@@ -1074,15 +1272,16 @@ private fun chipColors() = LocalTones.current.let { t ->
 }
 
 @Composable
-private fun chipBorder(selected: Boolean) = LocalTones.current.let { t ->
+internal fun chipBorder(selected: Boolean) = LocalTones.current.let { t ->
     FilterChipDefaults.filterChipBorder(enabled = true, selected = selected, borderColor = t.hairline, selectedBorderColor = t.accent)
 }
 
 @Composable
-private fun RowSheet(row: Row, onDismiss: () -> Unit, onRetag: (PayeeType, String, Boolean) -> Unit, onDeleteCash: (Long) -> Unit) {
+private fun RowSheet(row: Row, onDismiss: () -> Unit, onRetag: (PayeeType, String, Boolean) -> Unit, onDeleteCash: (Long) -> Unit, onSplit: () -> Unit) {
     val t = LocalTones.current
     val x = row.txn
-    val canRetag = x.kind == Kind.SPEND && x.parsed.template != Template.MANUAL && !x.parsed.counterparty.isNullOrBlank()
+    val canRetag = (x.kind == Kind.SPEND || x.kind == Kind.LENT) && x.parsed.template != Template.MANUAL && !x.parsed.counterparty.isNullOrBlank()
+    val canSplit = (x.kind == Kind.SPEND || x.kind == Kind.SUBSCRIPTION) && x.parsed.direction == Direction.DEBIT && (row.smsId != null || row.manualId != null)
     var type by remember { mutableStateOf(x.payeeType ?: PayeeType.PERSON) }
     var category by remember { mutableStateOf(x.category) }
     var onlyThis by remember { mutableStateOf(0) } // 0 = this payment only, 1 = every payment to this name
@@ -1096,6 +1295,15 @@ private fun RowSheet(row: Row, onDismiss: () -> Unit, onRetag: (PayeeType, Strin
                     "${x.kind.name.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }} · ${sourceLabel(x.parsed.source)} · ${x.day.format(dayMonth)}, ${x.receivedAt.toLocalTime().withSecond(0).withNano(0)}",
                     style = MaterialTheme.typography.bodyMedium, color = t.ink2,
                 )
+                if (x.splitWith.isNotEmpty()) {
+                    Text(
+                        "Split with ${x.splitWith.joinToString { it.name }} · your share ${rupeesExact(x.ownPaise)}",
+                        style = MaterialTheme.typography.bodyMedium, color = t.accent, modifier = Modifier.padding(top = 4.dp),
+                    )
+                }
+            }
+            if (canSplit) item {
+                SecondaryButton(if (x.splitWith.isEmpty()) "Split this payment" else "Edit split", onSplit, Modifier.fillMaxWidth())
             }
             if (canRetag) {
                 item { Gap(4.dp); Text("This payee is a", style = MaterialTheme.typography.titleSmall, color = t.ink) }
@@ -1107,8 +1315,10 @@ private fun RowSheet(row: Row, onDismiss: () -> Unit, onRetag: (PayeeType, Strin
                 }
                 item { Text("Category", style = MaterialTheme.typography.titleSmall, color = t.ink) }
                 item {
+                    // "Lent" makes a payment to a person a loan: not spend, and their payback settles it.
+                    val choices = if (type == PayeeType.PERSON) CATEGORIES + com.girish.expensetracker.core.Classifier.LENT else CATEGORIES
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        CATEGORIES.forEach { c -> FilterChip(category == c, { category = c }, { Text(c) }, colors = chipColors(), border = chipBorder(category == c)) }
+                        choices.forEach { c -> FilterChip(category == c, { category = c }, { Text(if (c == "Lent") "Lent (they'll pay back)" else c) }, colors = chipColors(), border = chipBorder(category == c)) }
                     }
                 }
                 if (row.smsId != null) item {

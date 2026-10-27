@@ -12,7 +12,10 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.ContextCompat
 import com.girish.expensetracker.notify.SpendService
 
@@ -32,20 +35,34 @@ class MainActivity : ComponentActivity() {
             startServiceIfReady()
         }
 
+    // "system", "dark" or "light"; dark is the default look, light follows the phone when set to system.
+    private val theme by lazy { mutableStateOf(getSharedPreferences("ui", MODE_PRIVATE).getString("theme", "dark") ?: "dark") }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
-            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
-        )
         setContent {
-            SpendTheme {
+            val dark = when (theme.value) {
+                "light" -> false
+                "system" -> isSystemInDarkTheme()
+                else -> true
+            }
+            LaunchedEffect(dark) {
+                val bars = if (dark) SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                else SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+                enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
+            }
+            SpendTheme(dark = dark) {
                 AppRoot(
                     tick = tick.intValue,
                     setup = setup(),
                     onRequestPermissions = ::requestPermissions,
                     onOpenBatterySettings = ::openBatterySettings,
                     onOpenAppSettings = ::openAppSettings,
+                    theme = theme.value,
+                    onTheme = { v ->
+                        theme.value = v
+                        getSharedPreferences("ui", MODE_PRIVATE).edit().putString("theme", v).apply()
+                    },
                 )
             }
         }

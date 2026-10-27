@@ -270,7 +270,7 @@ fun MonthsBars(snap: Snapshot, withInvestments: Boolean) {
     val progress = drawIn(withInvestments)
 
     Panel {
-        PanelHeader("Last four salary months", "28th → 27th")
+        PanelHeader("Last four salary months", "from the ${Ledger.salaryDay}${if (Ledger.salaryDay in 11..13) "th" else when (Ledger.salaryDay % 10) { 1 -> "st"; 2 -> "nd"; 3 -> "rd"; else -> "th" }}")
         if (totals.none { it > 0 }) {
             Text("Not enough history yet.", style = MaterialTheme.typography.bodyMedium, color = t.ink2)
             return@Panel

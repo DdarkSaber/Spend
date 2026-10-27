@@ -101,7 +101,7 @@ private fun Face(p: Person, size: Int) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun PeopleScreen(snap: Snapshot, onOpen: (Person) -> Unit) {
+internal fun PeopleScreen(snap: Snapshot, onSettle: (com.girish.expensetracker.core.Debt) -> Unit = {}, onOpen: (Person) -> Unit) {
     val t = LocalTones.current
     val all = remember(snap) { people(snap) }
     var query by remember { mutableStateOf("") }
@@ -138,6 +138,7 @@ internal fun PeopleScreen(snap: Snapshot, onOpen: (Person) -> Unit) {
                 ),
             )
         }
+        if (snap.debts.isNotEmpty()) item { OwedPanel(snap.debts, onSettle) }
         if (all.isEmpty()) item {
             Panel { Text("No payments to people yet. UPI payments to a name appear here.", style = MaterialTheme.typography.bodyMedium, color = t.ink2) }
         }

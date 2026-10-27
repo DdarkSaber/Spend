@@ -97,6 +97,19 @@ object DemoData {
             if (d.dayOfMonth == 12) sbiUpi(d.atTime(19, 40), 18_450.30, "SBI Cards and Pa")
             d = d.plusDays(1)
         }
+        // Credit card facts: ICICI spends carry the available limit, ICICI and SBI statements carry the bill.
+        var avail = 66_000.0
+        var cardDay = today.minusDays(27)
+        val cardShops = listOf("AMAZON", "BOOKMYSHOW", "MYNTRA", "DECATHLON", "CROMA")
+        while (!cardDay.isAfter(today)) {
+            val spend = 900.0 + rnd.nextInt(0, 8) * 260.0
+            avail -= spend
+            list.add(Sms("AD-ICICIT-S", "INR ${amt(spend)} spent using ICICI Bank Card XX9999 on ${cardDay.format(f("dd-MMM-yy"))} on ${cardShops[rnd.nextInt(cardShops.size)]}. Avl Limit: INR ${amt(avail)}. If not you, call 1800 2662.", cardDay.atTime(16, 20)))
+            cardDay = cardDay.plusDays(4)
+        }
+        list.add(Sms("JM-ICICIT-S", "ICICI Bank Credit Card XX9999 Statement is sent to de***@mail.com. Total of Rs 18,240.00 or minimum of Rs 910.00 is due by ${today.plusDays(2).format(f("dd-MMM-yy")).uppercase()}.", today.minusDays(16).atTime(9, 0)))
+        list.add(Sms("AX-MYSBIC-S", "E-statement of SBI Credit Card ending XX11 dated ${today.minusDays(20).format(f("dd/MM/yyyy"))} has been mailed. Total Amt Due Rs 18450; Min Amt Due Rs 930; Payable by ${today.minusDays(1).format(f("dd/MM/yyyy"))}.", today.minusDays(19).atTime(8, 0)))
+        list.add(Sms("AD-HDFCBK-S", "DEAR HDFCBANK CARDMEMBER, PAYMENT OF Rs. 12000.00 RECEIVED TOWARDS YOUR CREDIT CARD ENDING WITH 4321 ON ${today.minusDays(9).format(f("d-M-yyyy"))}.YOUR AVAILABLE LIMIT IS RS. 236500.00", today.minusDays(9).atTime(11, 0)))
         // One layout the reader does not know yet, and one card that is not tracked.
         list.add(Sms("VA-ICICIT-S", "Refund of INR 499.00 credited to your ICICI Bank Card for DEMO STORE on ${today.minusDays(3).format(f("dd-MMM-yy"))}.", today.minusDays(3).atTime(18, 30)))
         list.add(Sms("JD-HDFCBK-S", "Spent Rs.250 On HDFC Bank Card 9911 At ..DEMO CAFE_ On ${today.minusDays(5).format(f("yyyy-MM-dd"))}:12:10:00.", today.minusDays(5).atTime(12, 10)))
