@@ -62,16 +62,46 @@ object Classifier {
             Template.HDFC_IMPS_RECEIVED, Template.DCB_CREDIT ->
                 txn(Kind.INCOME, category = "Money in")
 
+            // Other banks (generic rules) and imported statement rows: same decisions as the exact layouts above.
+            Template.GENERIC_DEBIT, Template.STATEMENT_DEBIT -> when {
+                name.isBlank() -> txn(Kind.SPEND, PayeeType.MERCHANT, if (atm.containsMatchIn(narration)) "Cash" else "Uncategorised")
+                atm.containsMatchIn(narration) || upper == "ATM" -> txn(Kind.SPEND, PayeeType.MERCHANT, "Cash")
+                profile.isSelfName(name) || profile.isSelfVpa(name) -> txn(Kind.TRANSFER)
+                cardBillPayees.any { upper.startsWith(it) } -> txn(Kind.TRANSFER, category = "Card bill")
+                investmentPayees.any { it in upper } -> txn(Kind.INVESTMENT_LUMPSUM, PayeeType.MERCHANT)
+                else -> spend(p, receivedAt, payeeRules)
+            }
+
+            Template.GENERIC_CARD_SPENT -> spend(p, receivedAt, payeeRules)
+            Template.GENERIC_CARD_PAYMENT -> txn(Kind.TRANSFER, category = "Card bill")
+            Template.GENERIC_CARD_REFUND -> txn(Kind.REFUND, PayeeType.MERCHANT, "Refund")
+
+            Template.GENERIC_CREDIT, Template.STATEMENT_CREDIT -> when {
+                "SALARY" in narration || "SALARY" in upper -> txn(Kind.INCOME, category = "Salary", salary = true)
+                interestWord.containsMatchIn(narration) -> txn(Kind.INCOME, category = "Money in")
+                name.isBlank() -> txn(Kind.INCOME, category = "Money in")
+                profile.isSelfVpa(name) || profile.isSelfName(name) -> txn(Kind.TRANSFER)
+                payeeRules.lookup(name)?.type == PayeeType.MERCHANT -> txn(Kind.REFUND, PayeeType.MERCHANT, "Refund")
+                investmentPayees.any { it in payer } -> txn(Kind.INCOME, category = "Money in")
+                refundWords.any { it in payer } || PayeeGuess.isMerchantLike(payer) -> txn(Kind.REFUND, PayeeType.MERCHANT, "Refund")
+                // A statement credit with a name could be anything (a salary, a sale): kept out of spend unless it's a person.
+                p.template == Template.STATEMENT_CREDIT && PayeeGuess.type(name) != PayeeType.PERSON -> txn(Kind.INCOME, category = "Money in")
+                else -> txn(Kind.PERSON_CREDIT, PayeeType.PERSON)
+            }
+
             // Hand-entered cash: the category is stored in the narration.
             Template.MANUAL ->
                 txn(Kind.SPEND, PayeeType.MERCHANT, p.narration ?: "Uncategorised")
         }
     }
 
+    private val atm = Regex("\\bATM\\b|WITHDRAWN|CASH WDL", RegexOption.IGNORE_CASE)
+    private val interestWord = Regex("\\bINTEREST\\b", RegexOption.IGNORE_CASE)
+
     private fun spend(p: ParsedSms, receivedAt: LocalDateTime, rules: PayeeRules): Txn {
         val name = p.counterparty.orEmpty()
-        // A retag by the user always wins over the keyword guess.
-        rules.lookup(name)?.let { return Txn(p, Kind.SPEND, it.type, it.category, receivedAt) }
+        // A retag by the user always wins over the keyword guess ("Lent" makes it a loan, not spend).
+        rules.lookup(name)?.let { return Txn(p, if (it.category == LENT) Kind.LENT else Kind.SPEND, it.type, it.category, receivedAt) }
         // Card swipes (credit, or a debit card at a shop) always pay a merchant; UPI can pay either.
         val type = if (p.source.type == SourceType.CARD || p.template == Template.DCB_CARD_SPENT) PayeeType.MERCHANT else PayeeGuess.type(name)
         val category = PayeeGuess.category(name) ?: if (type == PayeeType.PERSON) "People" else "Uncategorised"
@@ -86,7 +116,12 @@ object Classifier {
         Kind.INCOME -> "Money in"
         Kind.PERSON_CREDIT -> "Paid back"
         Kind.REFUND -> "Refund"
+        Kind.LENT -> LENT
+        Kind.REPAID -> "Repaid"
     }
+
+    /** The category that turns a payment to a person into a loan they will pay back. */
+    const val LENT = "Lent"
 }
 
 /** Remembered retags: payee name -> (type, category). */

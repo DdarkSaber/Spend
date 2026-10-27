@@ -31,8 +31,8 @@ object ProfileDetector {
 
     private val salaryName = Regex("SALARY PAYMENT-([A-Za-z .]+?)-", RegexOption.IGNORE_CASE)
 
-    private val upiDebits = setOf(Template.HDFC_UPI_SENT, Template.SBI_UPI_DEBIT, Template.DCB_UPI_DEBIT)
-    private val upiCredits = setOf(Template.HDFC_UPI_CREDIT, Template.SBI_CREDIT, Template.DCB_UPI_CREDIT)
+    private val upiDebits = setOf(Template.HDFC_UPI_SENT, Template.SBI_UPI_DEBIT, Template.DCB_UPI_DEBIT, Template.GENERIC_DEBIT)
+    private val upiCredits = setOf(Template.HDFC_UPI_CREDIT, Template.SBI_CREDIT, Template.DCB_UPI_CREDIT, Template.GENERIC_CREDIT)
 
     /** Transfers between your own accounts are usually round and large; small amounts are too easy to match by chance. */
     private const val MIN_SELF_TRANSFER_PAISE = 500_00L

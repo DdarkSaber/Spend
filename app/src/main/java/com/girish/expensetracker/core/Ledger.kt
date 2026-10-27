@@ -65,7 +65,7 @@ object Ledger {
     fun todayAmount(t: Txn): Long = when (t.kind) {
         Kind.SPEND, Kind.SUBSCRIPTION, Kind.INVESTMENT_SIP -> t.amountPaise
         Kind.PERSON_CREDIT, Kind.REFUND -> -t.amountPaise
-        Kind.INVESTMENT_LUMPSUM, Kind.TRANSFER, Kind.INCOME -> 0
+        Kind.INVESTMENT_LUMPSUM, Kind.TRANSFER, Kind.INCOME, Kind.LENT, Kind.REPAID -> 0
     }
 
     /** Month Y: same as today, plus lump-sum investments. */

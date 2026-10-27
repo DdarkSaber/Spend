@@ -34,6 +34,15 @@ enum class Template {
     ICICI_CARD_PAYMENT,
     HDFC_CARD_WITHDRAWAL,
     HDFC_SMARTPAY_BILL,
+    // Any other bank, read by the generic phrasing rules (see Generic in SmsReader).
+    GENERIC_DEBIT,
+    GENERIC_CREDIT,
+    GENERIC_CARD_SPENT,
+    GENERIC_CARD_PAYMENT,
+    GENERIC_CARD_REFUND,
+    // A row from an imported bank statement (CSV).
+    STATEMENT_DEBIT,
+    STATEMENT_CREDIT,
     // Entered by hand in the app (cash).
     MANUAL,
 }
@@ -63,6 +72,10 @@ enum class Kind {
     INCOME,
     PERSON_CREDIT,
     REFUND,
+    /** Money lent to a person (marked by the owner): not spend, tracked until they pay it back. */
+    LENT,
+    /** A person paying back money lent to them: settles the loan, does not reduce spend. */
+    REPAID,
 }
 
 enum class PayeeType { MERCHANT, PERSON }

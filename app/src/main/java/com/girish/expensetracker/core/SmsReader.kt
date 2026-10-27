@@ -25,10 +25,51 @@ object SmsReader {
     // DLT headers look like "VM-HDFCBK-S" (prefix, 6-char entity, optional S/T/G/P type).
     private val dltHeader = Regex("^[A-Z]{2}-([A-Z0-9]{6})(?:-([STGP]))?$", RegexOption.IGNORE_CASE)
 
-    private val bankCodes = setOf(
-        "HDFCBK", "HDFCBN", "SBIUPI", "SBICRD", "MYSBIC", "SBIINB", "SBIPSG",
-        "ICICIT", "ICICIB", "ICICIS", "DCBANK", "DCBBNK",
-    )
+    /**
+     * DLT sender entity -> bank. The first four banks have exact layouts; the rest are read by [Generic].
+     * Codes collected from the banks' own SMS (and cross-checked against open-source parsers).
+     */
+    private val bankCodes: Map<String, String> = buildMap {
+        fun bank(name: String, vararg codes: String) = codes.forEach { put(it, name) }
+        bank("HDFC", "HDFCBK", "HDFCBN", "HDFCCC")
+        bank("SBI", "SBIUPI", "SBICRD", "MYSBIC", "SBIINB", "SBIPSG", "CBSSBI", "ATMSBI", "SBIBNK", "SBMSMS")
+        bank("ICICI", "ICICIT", "ICICIB", "ICICIS", "ICICIO")
+        bank("DCB", "DCBANK", "DCBBNK")
+        bank("AXIS", "AXISBK", "AXISBN", "AXISCC", "AXISMR")
+        bank("KOTAK", "KOTAKB", "KOTAKD", "KOTAKC", "KOTAKM")
+        bank("IDFC", "IDFCBK", "IDFCFB", "IDFCCC")
+        bank("YES", "YESBNK", "YESBKC")
+        bank("AU", "AUBANK", "AUBKCC")
+        bank("INDUSIND", "INDUSB", "INDUSL")
+        bank("BOB", "BOBTXN", "BOBSMS", "BOBCRD", "BARODA")
+        bank("PNB", "PNBSMS", "PNBBNK")
+        bank("CANARA", "CANBNK", "CANARA")
+        bank("UNION", "UNIONB", "UBINSM")
+        bank("FEDERAL", "FEDBNK", "FEDSMS", "FEDFIB", "FEDSCP")
+        bank("INDIAN", "INDBNK", "INDIAN")
+        bank("IOB", "IOBCHN", "IOBBNK")
+        bank("BOI", "BOIIND", "BOIBNK")
+        bank("CENTRAL", "CENTBK")
+        bank("UCO", "UCOBNK")
+        bank("IDBI", "IDBIBK")
+        bank("RBL", "RBLBNK", "RBLCRD")
+        bank("EQUITAS", "EQUTAS", "EQUITS", "EQUITA")
+        bank("BANDHAN", "BANDHN")
+        bank("KARNATAKA", "KBLBNK", "KTKBNK")
+        bank("SIB", "SIBSMS", "SIBBNK")
+        bank("CUB", "CUBANK", "CUBLTD")
+        bank("HSBC", "HSBCIN")
+        bank("SC", "SCBANK", "STANCB")
+        bank("AMEX", "AMEXIN")
+        bank("ONECARD", "ONECRD", "ONECAR")
+        bank("SLICE", "SLCBNK", "SLCEIT")
+        bank("AIRTEL", "AIRBNK")
+        bank("JIO", "JIOPBS")
+    }
+
+    /** The bank behind a DLT sender ("VM-AXISBK-S" -> "AXIS"), or null for anything that isn't a bank. */
+    fun bankOf(sender: String): String? =
+        dltHeader.matchEntire(sender.trim())?.groupValues?.get(1)?.uppercase()?.let { bankCodes[it] }
 
     private val promoPhrases = listOf(
         "pre-approved", "preapproved", "pre approved", "eligible", "eligibility", "personal loan",
@@ -55,14 +96,15 @@ object SmsReader {
         val header = dltHeader.matchEntire(sender.trim()) ?: return ReadResult.NotBank
         val entity = header.groupValues[1].uppercase()
         val type = header.groupValues[2].uppercase()
-        if (entity !in bankCodes) return ReadResult.NotBank
+        val bank = bankCodes[entity] ?: return ReadResult.NotBank
         if (type == "P") return ReadResult.Promo
 
         val text = body.replace(Regex("\\s+"), " ").trim()
         val lower = text.lowercase()
         if (informationalPhrases.any { it in lower }) return ReadResult.Informational
 
-        val parsed = Layouts.parse(text)
+        // Exact layouts first; for other banks (and new layouts of known ones) the generic phrasing rules.
+        val parsed = Layouts.parse(text) ?: Generic.parse(text, bank)
         if (parsed == null) {
             if (promoPhrases.any { it in lower }) return ReadResult.Promo
             return if (looksTransactional.containsMatchIn(text)) ReadResult.Unparsed(text) else ReadResult.Informational
@@ -231,6 +273,14 @@ internal object Dates {
         Regex("^\\d{2}-[A-Za-z]{3}-\\d{4}$") to f("dd-MMM-yyyy"),
         Regex("^\\d{2}/[A-Za-z]{3}/\\d{4}$") to f("dd/MMM/yyyy"),
         Regex("^\\d{1,2}[A-Za-z]{3}\\d{2}$") to f("dMMMyy"),
+        // Looser shapes other banks use: single-digit day or month, 2- or 4-digit year.
+        Regex("^\\d{1,2}/\\d{1,2}/\\d{4}$") to f("d/M/yyyy"),
+        Regex("^\\d{1,2}/\\d{1,2}/\\d{2}$") to f("d/M/yy"),
+        Regex("^\\d{1,2}-\\d{1,2}-\\d{2}$") to f("d-M-yy"),
+        Regex("^\\d{1,2}-[A-Za-z]{3}-\\d{4}$") to f("d-MMM-yyyy"),
+        Regex("^\\d{1,2}-[A-Za-z]{3}-\\d{2}$") to f("d-MMM-yy"),
+        Regex("^\\d{1,2}/[A-Za-z]{3}/\\d{4}$") to f("d/MMM/yyyy"),
+        Regex("^\\d{1,2} [A-Za-z]{3} \\d{4}$") to f("d MMM yyyy"),
     )
 
     fun parse(raw: String): LocalDate? {
@@ -239,5 +289,120 @@ internal object Dates {
             if (shape.matches(s)) return runCatching { LocalDate.parse(s, fmt) }.getOrNull()
         }
         return null
+    }
+}
+
+/**
+ * Banks without an exact layout. Indian bank SMS share a handful of phrasings ("INR 500 debited from A/c XX1234 ...
+ * to NAME", "spent on ... Card X3349 at SHOP", "credited ... by a/c linked to VPA x@y"), so one set of rules reads
+ * the amount, direction, account or card, the other side and the date. Anything it is unsure of returns null and
+ * lands in "SMS I couldn't read" instead of being guessed.
+ */
+internal object Generic {
+
+    private const val AMT = "([\\d,]+(?:\\.\\d{1,2})?)"
+    private val I = RegexOption.IGNORE_CASE
+
+    private val amount = Regex("(?:rs\\.?|inr|₹)\\s*$AMT", I)
+    // An amount right after one of these is a balance or limit, never the transaction.
+    private val notTheAmount = Regex("(?:bal(?:ance)?|limit|lmt|amt|avlbl)\\W{0,4}(?:is\\W{0,3})?(?:rs\\.?|inr|₹)?\\s*$", I)
+
+    private val skip = Regex(
+        "\\b(?:otp|one time password|payment request|requested|request of|is due|due on|due by|due date|will be|" +
+            "declined|failed|unsuccessful|not processed|mandate (?:created|registered)|has been created|statement|" +
+            "minimum amount|min amt|reminder|bill generated|emi conversion)\\b",
+        I,
+    )
+    private val debitWord = Regex("\\b(?:debited|spent|sent|paid|withdrawn|transferred|deducted|purchase|dr)\\b", I)
+    private val creditWord = Regex("\\b(?:credited|received|deposited|refunded|refund|reversed|reversal|cr)\\b", I)
+    private val interest = Regex("\\binterest\\b.{0,40}\\b(?:paid|credited)\\b", I)
+    private val cardBillPaid = Regex(
+        "payment.{0,80}(?:received|credited|successful|processed).{0,80}credit ?card|credit ?card.{0,60}payment.{0,60}(?:received|credited|successful)",
+        I,
+    )
+    // A "Card XX1234" that is not a debit card is a credit card (account debits say a/c).
+    private val creditCard = Regex("credit ?card|\\bcard\\b|(?:avl|avbl|available)\\.? ?(?:credit )?(?:lmt|limit)|\\bcc\\b", I)
+    private val debitCard = Regex("debit ?card", I)
+    private val number = Regex(
+        "(?:a/?c|acct|account|card)(?:\\s*(?:no\\.?|number|ending(?:\\s*with)?|num))?\\s*[:.\\-]?\\s*([xX*.\\d]*\\d{2,})",
+        I,
+    )
+    private val dateToken = Regex(
+        "\\b(\\d{4}-\\d{2}-\\d{2}|\\d{1,2}[-/][A-Za-z]{3}[-/]\\d{2,4}|\\d{1,2}[-/]\\d{1,2}[-/]\\d{2,4}|\\d{1,2}[A-Za-z]{3}\\d{2})\\b",
+    )
+    private val vpa = Regex("(?:to|from|by|towards)\\s+(?:a/c linked to\\s+)?(?:vpa\\s+)?([\\w.\\-]+@[\\w.\\-]*\\w)", I)
+    private val upiInfo = Regex("UPI/(?:DR/|CR/|P2[AM]/)?\\d{6,}/([^/.;]+)", I)
+    private val yesUpi = Regex("@UPI_(.+?)\\s+\\d{1,2}-\\d{1,2}-\\d{2,4}", I)
+    private val atPlace = Regex("\\bat\\s+([^.;]+?)(?:\\s+on\\s|\\s+\\d{1,2}[-/]|\\.\\s|\\.$|;|\\s+avl|\\s+ref|$)", I)
+    private val toWhom = Regex(
+        "\\b(?:to|towards|trf to)\\s*:?\\s*([^.;(]+?)(?:\\s+on\\s|\\s+ref|\\s+upi|\\s+rrn|\\.\\s|\\.$|;|\\(|\\s+avl|\\s+total|$)",
+        I,
+    )
+    private val fromWhom = Regex("\\b(?:from|by)\\s+([^.;(]+?)(?:\\s+on\\s|\\s+ref|\\s+upi|\\s+rrn|\\s+via|\\.\\s|\\.$|;|\\(|\\s+avl|$)", I)
+    private val onMerchant = Regex("\\bon\\s+([A-Z][A-Z0-9 &'*\\-]{2,}?)\\s+\\d{2}-\\d{2}-\\d{4}")
+    private val creditedMerchant = Regex(";\\s*([A-Z0-9][A-Z0-9 &.\\-]{2,}?)\\s+credited")
+    private val ref = Regex("(?:ref(?:erence)?\\.?(?:\\s*no)?|rrn|utr)\\s*[:.]?\\s*(\\w{6,})", I)
+    private val notAName = Regex(
+        "^(?:a/?c|your|account|mobile|you|the|imps|neft|rtgs|upi|atm|card|ac|acct)\\b|a/?c\\s*[xX*\\d]|\\d{6,}",
+        I,
+    )
+
+    fun parse(text: String, bank: String): ParsedSms? {
+        if (skip.containsMatchIn(text)) return null
+        val amt = amount.findAll(text).firstOrNull { !notTheAmount.containsMatchIn(text.substring(maxOf(0, it.range.first - 24), it.range.first)) }
+            ?: return null
+        val paise = toPaise(amt.groupValues[1]) ?: return null
+        if (paise <= 0) return null
+
+        val d = debitWord.find(text)
+        val c = creditWord.find(text)
+        val isCardBill = cardBillPaid.containsMatchIn(text)
+        val direction = when {
+            isCardBill || interest.containsMatchIn(text) -> Direction.CREDIT
+            d != null && (c == null || d.range.first < c.range.first) -> Direction.DEBIT
+            c != null -> Direction.CREDIT
+            else -> return null
+        }
+        val isCard = !debitCard.containsMatchIn(text) && creditCard.containsMatchIn(text)
+        val digits = number.findAll(text).map { it.groupValues[1].filter(Char::isDigit) }.firstOrNull { it.length >= 2 } ?: return null
+        val source = Source(bank, digits.takeLast(4), if (isCard) SourceType.CARD else SourceType.ACCOUNT)
+        val date = dateToken.findAll(text).firstNotNullOfOrNull { Dates.parse(it.groupValues[1]) }
+        val reference = ref.find(text)?.groupValues?.get(1)
+
+        val template = when {
+            isCard && isCardBill -> Template.GENERIC_CARD_PAYMENT
+            isCard && direction == Direction.DEBIT -> Template.GENERIC_CARD_SPENT
+            isCard -> Template.GENERIC_CARD_REFUND
+            direction == Direction.DEBIT -> Template.GENERIC_DEBIT
+            else -> Template.GENERIC_CREDIT
+        }
+        val other = if (isCardBill) null else counterparty(text, direction)
+        // The whole SMS is kept as narration so salary, interest and ATM wording can be recognised.
+        return ParsedSms(template, direction, paise, source, other, date, reference, text)
+    }
+
+    /** The other side: a UPI ID if there is one, else a shop or a name from the usual phrasings. */
+    fun counterparty(text: String, direction: Direction): String? {
+        vpa.find(text)?.let { return it.groupValues[1].trimEnd('.') }
+        val candidates = buildList {
+            add(upiInfo); add(yesUpi)
+            if (direction == Direction.DEBIT) { add(atPlace); add(onMerchant); add(creditedMerchant); add(toWhom) } else add(fromWhom)
+        }
+        for (re in candidates) {
+            val raw = re.find(text)?.groupValues?.get(1) ?: continue
+            val name = raw.trim().trim('.', '_', ' ', ':', '-').replace(Regex("\\s+"), " ")
+            if (name.length < 2 || notAName.containsMatchIn(name)) continue
+            return name.take(40)
+        }
+        return null
+    }
+
+    private fun toPaise(raw: String): Long? {
+        val clean = raw.replace(",", "").trimEnd('.')
+        if (clean.isEmpty()) return null
+        val parts = clean.split('.')
+        val rupees = parts[0].toLongOrNull() ?: return null
+        val frac = parts.getOrNull(1)?.padEnd(2, '0')?.take(2)?.toLongOrNull() ?: 0L
+        return rupees * 100 + frac
     }
 }

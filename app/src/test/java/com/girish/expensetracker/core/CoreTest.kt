@@ -137,8 +137,16 @@ class FilterTest {
     }
 
     @Test fun unknownLayoutGoesToUnparsed() {
-        val r = SmsReader.read("VA-ICICIT-S", "Refund of INR 499.00 credited to ICICI Bank Card XX9999 for SOMESHOP on 16-Oct-26.", PROFILE)
-        assertTrue("refund layout not implemented yet, must land in Unparsed: $r", r is ReadResult.Unparsed)
+        // No account or card number: nothing to file it under, so it is shown, never guessed.
+        val r = SmsReader.read("VA-ICICIT-S", "Refund of INR 499.00 credited to your ICICI Bank Card for SOMESHOP on 16-Oct-26.", PROFILE)
+        assertTrue("must land in Unparsed: $r", r is ReadResult.Unparsed)
+    }
+
+    @Test fun cardRefundWithNumberIsReadGenerically() {
+        val t = txn("VA-ICICIT-S", "Refund of INR 499.00 credited to ICICI Bank Card XX9999 for SOMESHOP on 16-Oct-26.")
+        assertEquals(Kind.REFUND, t.kind)
+        assertEquals(Source("ICICI", "9999", SourceType.CARD), t.parsed.source)
+        assertEquals(-49900L, Ledger.monthAmount(t))
     }
 }
 

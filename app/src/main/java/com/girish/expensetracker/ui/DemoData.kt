@@ -98,7 +98,7 @@ object DemoData {
             d = d.plusDays(1)
         }
         // One layout the reader does not know yet, and one card that is not tracked.
-        list.add(Sms("VA-ICICIT-S", "Refund of INR 499.00 credited to ICICI Bank Card XX9999 for DEMO STORE on ${today.minusDays(3).format(f("dd-MMM-yy"))}.", today.minusDays(3).atTime(18, 30)))
+        list.add(Sms("VA-ICICIT-S", "Refund of INR 499.00 credited to your ICICI Bank Card for DEMO STORE on ${today.minusDays(3).format(f("dd-MMM-yy"))}.", today.minusDays(3).atTime(18, 30)))
         list.add(Sms("JD-HDFCBK-S", "Spent Rs.250 On HDFC Bank Card 9911 At ..DEMO CAFE_ On ${today.minusDays(5).format(f("yyyy-MM-dd"))}:12:10:00.", today.minusDays(5).atTime(12, 10)))
         return list.sortedBy { it.at }
     }
