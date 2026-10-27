@@ -1,0 +1,22 @@
+Spend reads the transaction SMS your bank already sends and keeps one line in your notification shade: <b>Today ₹X · Month ₹Y</b>.
+
+No sign-up, no bank login and no internet permission. Everything stays on the phone.
+
+<b>What it does</b>
+<ul>
+<li>Day, salary-month, card and people views with charts</li>
+<li>Credit card utilisation: how much of each limit you use, and what to pay before the statement date to stay under 30%</li>
+<li>Card bill reminders from the statement SMS (3 days before and on the due date)</li>
+<li>Budgets per month and per category, with alerts at 80%, 100% and when you're ahead of pace</li>
+<li>Split a payment with friends: only your share counts, the rest is owed until they pay you back</li>
+<li>Subscriptions with next charge date and price-rise flags</li>
+<li>No double counting of card bills, transfers between your own accounts or repeated SMS</li>
+<li>Encrypted backup and restore, CSV export and bank statement CSV import</li>
+<li>Home-screen widget, dark and light themes</li>
+</ul>
+
+<b>Banks</b>
+Exact layouts for HDFC, SBI, ICICI and DCB; generic rules for about 30 more Indian banks (Axis, Kotak, IDFC FIRST, Yes, AU, IndusInd, Bank of Baroda, PNB, Canara, Union, Federal and others). Messages it can't read are listed, never guessed.
+
+<b>Battery</b>
+No polling and no wake locks. It wakes only when an SMS arrives, plus one inexact alarm at midnight.

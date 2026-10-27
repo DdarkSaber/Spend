@@ -251,7 +251,7 @@ class Repo(val store: Store) {
             }
             if (covered) continue
             val dir = if (s.debit) Direction.DEBIT else Direction.CREDIT
-            val other = Generic.counterparty(s.description, dir) ?: s.description.take(40).ifBlank { null }
+            val other = com.girish.expensetracker.core.StatementCsv.payee(s.description, s.debit)
             val parsed = ParsedSms(if (s.debit) Template.STATEMENT_DEBIT else Template.STATEMENT_CREDIT, dir, s.amountPaise, source, other, s.day, null, s.description)
             rows += Row(Classifier.classify(parsed, s.day.atTime(12, 0), profile, rules), null, null, s.description)
         }

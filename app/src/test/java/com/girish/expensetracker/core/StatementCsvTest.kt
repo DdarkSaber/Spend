@@ -40,6 +40,12 @@ class StatementCsvTest {
         assertNotNull(Generic.counterparty("UPI/DR/600000000001/SWIGGY/YESB/payment", Direction.DEBIT))
     }
 
+    @Test fun statementPayees() {
+        assertEquals("DOMINOS PIZZA", StatementCsv.payee("UPI-DOMINOS PIZZA-dominos@ybl-600000000101", true))
+        assertEquals("ACME CORP", StatementCsv.payee("NEFT CR-ACME CORP-SALARY MAY", false))
+        assertEquals("RAVI K", StatementCsv.payee("UPI/DR/600000000001/RAVI K/SBIN/ravi@oksbi/Payment", true))
+    }
+
     @Test fun notAStatement() {
         val r = StatementCsv.parse("name,age\nasha,30\n")
         assertTrue(r.rows.isEmpty())

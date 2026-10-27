@@ -1,0 +1,6 @@
+• Credit card utilisation with "pay ₹X before the statement" advice
+• Card bill reminders, budgets with alerts, subscriptions
+• Split a payment; track who owes you
+• About 30 more banks
+• Search, year view, light theme, home-screen widget
+• Encrypted backup/restore and bank statement CSV import

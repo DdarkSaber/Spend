@@ -264,7 +264,7 @@ fun AppRoot(
     androidx.activity.compose.BackHandler(enabled = !searching && openPerson != null) { openPerson = null }
     androidx.activity.compose.BackHandler(enabled = !searching && openPerson == null && tab != Tab.DAYS) { tab = Tab.DAYS }
     SpendShell(
-        tab = tab, onTab = { tab = it }, showNav = setup.ready, snackbar = snackbar,
+        tab = tab, onTab = { tab = it; searching = false; openPerson = null }, showNav = setup.ready, snackbar = snackbar,
         fab = null,
     ) {
         val s = snap

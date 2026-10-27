@@ -71,6 +71,17 @@ object StatementCsv {
         return Result(rows, skipped, if (rows.isEmpty()) "No transactions found under the header row." else null)
     }
 
+    private val hyphenUpi = Regex("^UPI-([^-]+?)-([\\w.\\-]+@[\\w.]+)", RegexOption.IGNORE_CASE)
+    private val transferName = Regex("^(?:NEFT|IMPS|RTGS)\\s*(?:CR|DR)?-?(?:[A-Z0-9]+-)?([A-Z][A-Z .&]+?)(?:-|$)", RegexOption.IGNORE_CASE)
+
+    /** The other side from a statement narration: "UPI-DOMINOS PIZZA-dominos@ybl-600..." -> "DOMINOS PIZZA". */
+    fun payee(description: String, debit: Boolean): String? {
+        val d = description.trim()
+        hyphenUpi.find(d)?.let { return it.groupValues[1].trim() }
+        transferName.find(d)?.let { return it.groupValues[1].trim() }
+        return Generic.counterparty(d, if (debit) Direction.DEBIT else Direction.CREDIT) ?: d.take(40).ifBlank { null }
+    }
+
     private fun money(raw: String?): Long? {
         val s = raw?.uppercase()?.replace(Regex("[^0-9.]"), "")?.trim('.')?.takeIf { it.isNotEmpty() } ?: return null
         val parts = s.split('.')

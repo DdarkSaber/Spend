@@ -135,7 +135,16 @@ object Credit {
             else -> mine.filter { it.day > today.minusDays(30) }.sumOf(::owed)
         }.coerceAtLeast(0L)
 
-        val paid = if (stmt == null) 0L else mine.filter { it.kind == Kind.TRANSFER && it.parsed.direction == Direction.CREDIT && it.day >= stmt.statementDate }.sumOf { it.amountPaise }
+        val paid = if (stmt == null) 0L else {
+            val cardSide = mine.filter { it.kind == Kind.TRANSFER && it.parsed.direction == Direction.CREDIT && it.day >= stmt.statementDate }.sumOf { it.amountPaise }
+            // Paid by UPI from a bank account ("SBI Cards and Payment"): only the account SMS may arrive. The larger
+            // side wins, so a payment confirmed on both sides is not counted twice.
+            val accountSide = txns.filter {
+                it.category == "Card bill" && it.parsed.direction == Direction.DEBIT && it.parsed.source.type == SourceType.ACCOUNT &&
+                    it.day >= stmt.statementDate && it.parsed.counterparty.orEmpty().uppercase().contains(card.bank)
+            }.sumOf { it.amountPaise }
+            max(cardSide, accountSide)
+        }
         val day = ownerStatementDay ?: stmt?.statementDate?.dayOfMonth
         return CardHealth(card, limit, ownerLimitPaise == null && limit != null, outstanding, stmt, day?.let { nextOn(it, today) }, paid)
     }

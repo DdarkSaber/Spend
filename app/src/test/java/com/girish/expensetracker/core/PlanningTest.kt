@@ -84,6 +84,16 @@ class CreditHealthTest {
         assertTrue(alerts.isEmpty())
     }
 
+    @Test fun billPaidByUpiFromAnAccountCounts() {
+        val me = ME.copy(accounts = setOf(Source("SBI", "5678", SourceType.ACCOUNT)))
+        val upi = Classifier.classify(
+            (SmsReader.read("JD-SBIUPI-S", "Dear UPI user A/C X5678 debited by 12450.00 on date 12Oct26 trf to SBI Cards and Pa Refno 600000000009", me) as ReadResult.Parsed).parsed,
+            at("2026-10-12"), me,
+        )
+        val stmt = CardStatement("SBI", "52", LocalDate.of(2026, 10, 1), 12_450_00L, 970_00L, LocalDate.of(2026, 10, 21))
+        assertEquals(0L, Credit.health(SBI_CC, listOf(upi), listOf(stmt), emptyList(), null, null, LocalDate.of(2026, 10, 19)).billLeftPaise)
+    }
+
     @Test fun reminderThreeDaysBeforeAndOnTheDay() {
         val stmt = CardStatement("ICICI", "9999", LocalDate.of(2026, 10, 3), 2_762_84L, 140_00L, LocalDate.of(2026, 10, 21))
         fun on(d: Int) = Alerts.credit(

@@ -6,6 +6,8 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -214,7 +216,7 @@ internal fun CardSettingsSheet(h: CardHealth, onDismiss: () -> Unit, onSave: (li
 internal fun BudgetPanel(lines: List<BudgetLine>, onEdit: () -> Unit) {
     val t = LocalTones.current
     Panel {
-        PanelHeader("Budgets", if (lines.isEmpty()) null else "this salary month") {
+        PanelHeader("Budgets") {
             RoundIcon(Icons.Outlined.Edit, "Edit budgets", onEdit, size = 34.dp)
         }
         if (lines.isEmpty()) {
@@ -238,9 +240,10 @@ internal fun BudgetPanel(lines: List<BudgetLine>, onEdit: () -> Unit) {
                 when {
                     b.share >= 1 -> "Over by ${rupees(b.spentPaise - b.limitPaise)}"
                     b.overPace -> "${rupees(b.limitPaise - b.spentPaise)} left · heading for ${rupees(b.projectedPaise)}"
+                    b.share >= 0.8 -> "${rupees(b.limitPaise - b.spentPaise)} left · ${(b.share * 100).toInt()}% used"
                     else -> "${rupees(b.limitPaise - b.spentPaise)} left · on track"
                 },
-                style = MaterialTheme.typography.labelMedium, color = if (b.overPace || b.share >= 1) t.warn else t.ink2, modifier = Modifier.padding(top = 4.dp),
+                style = MaterialTheme.typography.labelMedium, color = if (b.overPace || b.share >= 0.8) t.warn else t.ink2, modifier = Modifier.padding(top = 4.dp),
             )
         }
     }
@@ -522,12 +525,12 @@ internal fun SearchScreen(snap: Snapshot, isNew: (Row) -> Boolean, onBack: () ->
             }
         }
         item {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 categories.forEach { c -> FilterChip(category == c, { category = if (category == c) null else c }, { Text(c) }, colors = chipColors(), border = chipBorder(category == c)) }
             }
         }
         item {
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 sources.forEach { s -> FilterChip(source == s, { source = if (source == s) null else s }, { Text(sourceLabel(s)) }, colors = chipColors(), border = chipBorder(source == s)) }
             }
         }
@@ -579,7 +582,7 @@ internal fun ImportSheet(rows: Int, skipped: Int, sources: List<Source>, onDismi
             Text("${count(rows, "transaction")} found" + if (skipped > 0) " (${count(skipped, "line")} skipped)." else ". Rows your SMS already have are not counted twice.",
                 style = MaterialTheme.typography.bodyMedium, color = t.ink2)
             Text("Which account or card is this statement for?", style = MaterialTheme.typography.titleSmall, color = t.ink)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 sources.forEach { s -> FilterChip(chosen == s, { chosen = s }, { Text(sourceLabel(s)) }, colors = chipColors(), border = chipBorder(chosen == s)) }
             }
             PrimaryButton("Import ${count(rows, "transaction")}", { chosen?.let(onImport) }, enabled = chosen != null && rows > 0)
