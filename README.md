@@ -16,7 +16,7 @@ No sign-up · no bank login · no internet permission · everything stays on the
 
 ## Download
 
-1. Get **`Spend-v0.2.0.apk`** from [Releases](../../releases/latest)
+1. Get **`Spend-v0.3.0.apk`** from [Releases](../../releases/latest)
 2. Android 12 or newer; allow "Install unknown apps" when asked
 3. Open it, tap **Grant permissions**. Your last 120 days of bank SMS are read once
 
@@ -26,24 +26,44 @@ No sign-up · no bank login · no internet permission · everything stays on the
 
 ## What it does
 
-| | Feature | |
-|---|---|---|
-| 🔔 | **Always-on notification** | Today and salary-month totals, updated the moment a bank SMS lands |
-| 💳 | **Credit card utilisation** | % of each limit used, with *"pay ₹X before the statement date to stay under 30%"* |
-| ⏰ | **Bill reminders** | Due date, total and minimum from the statement SMS; reminded 3 days before and on the day |
-| 🎯 | **Budgets** | Monthly and per category; alerts at 80%, 100% and when you're ahead of pace |
-| ➗ | **Split a payment** | Tap a payment → split equally or custom, with People or contacts; only your share counts |
-| 🤝 | **Owed to you** | Splits and loans tracked per person; cleared automatically when they pay you back by UPI |
-| 🔁 | **Subscriptions** | Recurring charges, next date, price-rise flag |
-| 📅 | **Day, month & year** | Calendar, category donut, pace vs last month, 12-month view |
-| 👥 | **People** | Friends merged across UPI IDs and bank names |
-| 💰 | **Salary month** | Runs salary to salary, detected from your credit SMS |
-| 🏠 | **Rent detection** | Spots the monthly transfer to the same person |
-| 🧹 | **No double counting** | Card bills, transfers between your own accounts and repeated SMS are left out |
-| 🔍 | **Search** | Payee, category, card, amount or SMS text |
-| 📥 | **Statement import** | Bank CSV fills history from before you installed the app |
-| 🔐 | **Encrypted backup** | AES-256 file with your password, saved wherever you pick |
-| 🧩 | **Widget & themes** | Home-screen widget; dark, light or follow the system |
+**Track**
+
+| | |
+|---|---|
+| 🔔 **Always-on notification** | Today and salary-month totals, updated the moment a bank SMS lands |
+| 📅 **Day, month, year** | Calendar, category donut, pace vs last month, 12-month view |
+| 💰 **Salary month** | Runs salary to salary; savings rate per month |
+| 🧹 **No double counting** | Card bills, transfers between your own accounts and repeated SMS are left out |
+| 🔍 **Search & tags** | Find by payee, amount, card or tag; tag any payment ("office", "gift") |
+
+**Plan**
+
+| | |
+|---|---|
+| 💳 **Card utilisation** | % of each limit used, and *"pay ₹X before the statement date to stay under 30%"* |
+| ⏰ **Bill reminders** | From the statement SMS: 3 days before and on the due day, skipped once paid |
+| 🎯 **Budgets** | Monthly and per category; alerts at 80%, 100% and when you're ahead of pace |
+| 🔁 **Recurring** | Subscriptions (with price-rise alerts), EMIs and investments, each in one list |
+| ✈️ **Trips** | A trip's dates (plus anything tagged with its name), apart from normal months |
+
+**People**
+
+| | |
+|---|---|
+| ➗ **Split a payment** | Equal or custom, with People or contacts; only your share counts |
+| 🤝 **Owed to you** | Splits and loans per person; cleared when they pay you back by UPI |
+| 👥 **One person, many IDs** | Friends merged across UPI IDs and bank names |
+
+**Safety & control**
+
+| | |
+|---|---|
+| 🚨 **Worth a look** | Double charges, unusually large payments, foreign-currency charges |
+| 🧠 **Teach an SMS** | Tap the amount and payee in an unread SMS; Spend reads that shape from then on (on the phone, no AI, no internet) |
+| 🔒 **App lock** | Fingerprint, face or phone PIN; hidden from the recent-apps preview |
+| ☁️ **Weekly backup** | Encrypted, to Google Drive or a folder you pick; restore on a new phone |
+| 🌙 **Evening summary** | Optional quiet 9 pm notification with today's spend |
+| 🧩 **Widget & themes** | Home-screen widget; dark, light or follow the system |
 
 ---
 
@@ -57,8 +77,8 @@ Card issuers report your balance to the credit bureaus (CIBIL, Experian…) on t
 | **10–30%** | Healthy. Shows what gets it under 10% |
 | **30% and over** | Rose warning + notification: *"Pay ₹2,800 before 11 Nov to report under 30%"* |
 
-- The limit comes from your SMS (`Avl Limit` in ICICI, Axis, Yes, IDFC spends; `Available limit` in HDFC payments). You can set it by hand.
-- The statement date comes from the statement SMS (SBI, ICICI, HDFC…). You can set that by hand too.
+- The limit comes from your SMS (`Avl Limit` in card spends, `Available limit` in payment confirmations). You can set it by hand.
+- The statement date comes from the statement SMS. You can set that by hand too.
 
 ---
 
@@ -66,21 +86,21 @@ Card issuers report your balance to the credit bureaus (CIBIL, Experian…) on t
 
 <sub>All screenshots use the built-in demo data. No real accounts, names or amounts.</sub>
 
-| Home | Overview | Month |
+| Home | Month · Trends | Month · Recurring |
 |:-:|:-:|:-:|
-| <img src="docs/screenshots/home.png" width="240" alt="Home: 7-day spend chart" /> | <img src="docs/screenshots/overview.png" width="240" alt="Overview tiles" /> | <img src="docs/screenshots/salary-pace.png" width="240" alt="Salary and pace" /> |
+| <img src="docs/screenshots/home.png" width="240" alt="Home with Worth a look" /> | <img src="docs/screenshots/trends.png" width="240" alt="Four months and savings rate" /> | <img src="docs/screenshots/recurring.png" width="240" alt="Subscriptions, EMIs, investments" /> |
 
-| Credit card utilisation | Budgets | Owed to you |
+| Card utilisation | Budgets | Owed to you |
 |:-:|:-:|:-:|
-| <img src="docs/screenshots/utilisation.png" width="260" alt="Card at 33% of limit with pay-before advice" /> | <img src="docs/screenshots/budgets.png" width="260" alt="Budgets with over-budget category" /> | <img src="docs/screenshots/owed.png" width="260" alt="People who owe you from a split" /> |
+| <img src="docs/screenshots/utilisation.png" width="260" alt="Card at 33% of limit" /> | <img src="docs/screenshots/budgets.png" width="260" alt="Budgets" /> | <img src="docs/screenshots/owed.png" width="260" alt="People who owe you" /> |
 
-| Split a payment | Subscriptions & year | Light theme |
+| Split a payment | Teach an SMS | Trip |
 |:-:|:-:|:-:|
-| <img src="docs/screenshots/split.png" width="240" alt="Split sheet" /> | <img src="docs/screenshots/subs-year.png" width="240" alt="Subscriptions and 12-month view" /> | <img src="docs/screenshots/light.png" width="240" alt="Month screen in light theme" /> |
+| <img src="docs/screenshots/split.png" width="240" alt="Split sheet" /> | <img src="docs/screenshots/teach.png" width="240" alt="Teaching an unread SMS" /> | <img src="docs/screenshots/trip.png" width="240" alt="Goa trip totals" /> |
 
-| Cards | People | Setup |
+| More | App lock | Light theme |
 |:-:|:-:|:-:|
-| <img src="docs/screenshots/cards.png" width="240" alt="Spend per card" /> | <img src="docs/screenshots/people.png" width="240" alt="People list" /> | <img src="docs/screenshots/setup.png" width="240" alt="Accounts detected from SMS" /> |
+| <img src="docs/screenshots/more.png" width="240" alt="More, grouped into sections" /> | <img src="docs/screenshots/lock.png" width="240" alt="Locked screen" /> | <img src="docs/screenshots/light.png" width="240" alt="Light theme" /> |
 
 ---
 
@@ -91,8 +111,9 @@ Card issuers report your balance to the credit bureaus (CIBIL, Experian…) on t
 | HDFC · SBI · ICICI · DCB | Axis · Kotak · IDFC FIRST · Yes · AU · IndusInd · Bank of Baroda · PNB · Canara · Union · Federal · Indian · IOB · BOI · Central · UCO · IDBI · RBL · Equitas · Bandhan · Karnataka · South Indian · City Union · HSBC · Standard Chartered · Amex · OneCard · Slice · Airtel · Jio |
 
 - **Exact layouts** are tested against real SMS (names and numbers changed).
-- **Generic rules** read the common phrasing: amount, debit or credit, account or card, payee, date.
-- Anything unsure goes to **More → SMS I couldn't read**. It is never guessed.
+- **Generic rules** were checked against 278 real SMS from 22 banks collected from other open-source parsers' test suites: 234 read, the rest correctly ignored (OTPs, requests, mandates, "will be debited", failed payments) or foreign-currency.
+- Offer and scam wording is never counted, however money-like it reads.
+- Anything unsure goes to **More → SMS I couldn't read**, where you can teach it.
 
 ---
 
@@ -102,39 +123,34 @@ Card issuers report your balance to the credit bureaus (CIBIL, Experian…) on t
 |---|---|
 | ❌ Internet | No `INTERNET` permission: the app **cannot** send data anywhere |
 | ❌ Accounts, ads, analytics | None |
-| ❌ Cloud backup | Off. Your own encrypted file is the only backup |
+| ✅ Backups | Only your own encrypted file. Google Drive uploads it; the app never touches the network |
 | ✅ SMS read | Only from bank sender IDs; OTPs and promos are skipped |
 | ✅ Contacts | Not requested. Picking a contact for a split uses Android's picker |
-| ✅ Setup | Nothing hardcoded: accounts, name and salary day are detected on the phone and confirmed by you |
+| ✅ App lock | Android's own fingerprint / PIN prompt; nothing is stored by the app |
 
 ---
 
 ## Battery
 
-- No polling, no wake locks
-- Wakes only when an SMS arrives, plus one inexact alarm at midnight
-- Alerts and the widget update on those same moments
+- No polling, no wake locks, **no alarm sounds**
+- Wakes only when an SMS arrives, plus one silent system timer after midnight to reset "Today"
+- The weekly backup, bill reminders and alerts ride on those same moments
+- The optional 9 pm summary is one more silent timer, only while it's switched on
 
 ---
 
-## How it works
+## How it's built
 
 ```
-Bank SMS ─► SmsReceiver ─► SQLite (raw SMS only)
-                               │
-              ┌────────────────┼──────────────────┐
-              ▼                ▼                  ▼
-          SmsReader        CardFacts          Statement CSV
-   (exact + generic rules) (limits, bills)
-              │                │                  │
-              ▼                ▼                  ▼
-          Classifier ──► Dedupe ──► Owe ──► Ledger / Credit / Budgets
-                                                   │
-                                  Notification · Alerts · Widget · UI
+core/     pure Kotlin, unit-tested: SMS reading, classifying, ledger, credit,
+          budgets, splits, insights, teach-an-SMS (no Android imports)
+data/     SQLite store (raw SMS + your edits), Repo, backup
+notify/   notification, alerts, widget, midnight + evening timers
+ui/       one file per screen; AppController runs actions, SheetHost/PageHost route
 ```
 
 - Only raw SMS are stored; every number is recomputed from them, so fixing a parser fixes history too
-- Your own accounts and UPI IDs are learned from same-amount transfers between them
+- Screens only draw and describe actions; one controller does the work, so each piece has one job
 
 ---
 
@@ -145,11 +161,11 @@ Requirements: Android Studio (JDK 17+), Android SDK 37.
 ```bash
 git clone https://github.com/DdarkSaber/Spend.git
 cd Spend
-./gradlew testDebugUnitTest   # 95 tests: parsers, classifier, credit, budgets, splits, CSV
+./gradlew testDebugUnitTest   # 116 tests
 ./gradlew assembleDebug       # app/build/outputs/apk/debug/
 ```
 
-- Debug builds have **More → Load demo data**
+- Debug builds have **Load demo data** on an empty Home
 - Release signing reads an untracked `keystore.properties` (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`); without it the release build is unsigned
 - `fastlane/metadata/` holds the F-Droid listing text
 

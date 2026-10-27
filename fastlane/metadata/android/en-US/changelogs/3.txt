@@ -1,0 +1,7 @@
+• App lock (fingerprint, face or PIN)
+• Worth a look: double charges, unusually large and foreign charges
+• Savings rate, trips and tags, EMIs, investments
+• Teach Spend an unread SMS (on the phone, offline)
+• Weekly encrypted backup to Google Drive or a folder
+• Optional quiet 9 pm summary
+• Reads more real-world bank SMS; never counts offers or set-ups

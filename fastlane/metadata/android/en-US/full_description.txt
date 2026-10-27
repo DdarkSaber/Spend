@@ -12,6 +12,10 @@ No sign-up, no bank login and no internet permission. Everything stays on the ph
 <li>Subscriptions with next charge date and price-rise flags</li>
 <li>No double counting of card bills, transfers between your own accounts or repeated SMS</li>
 <li>Encrypted backup and restore, CSV export and bank statement CSV import</li>
+<li>Worth a look: double charges, unusually large and foreign-currency charges</li>
+<li>Savings rate, trips and tags, EMIs and investments</li>
+<li>Teach it a new SMS by tapping the amount and payee (on the phone, offline)</li>
+<li>App lock, weekly encrypted backup to Google Drive or a folder, optional 9 pm summary</li>
 <li>Home-screen widget, dark and light themes</li>
 </ul>
 
@@ -19,4 +23,4 @@ No sign-up, no bank login and no internet permission. Everything stays on the ph
 Exact layouts for HDFC, SBI, ICICI and DCB; generic rules for about 30 more Indian banks (Axis, Kotak, IDFC FIRST, Yes, AU, IndusInd, Bank of Baroda, PNB, Canara, Union, Federal and others). Messages it can't read are listed, never guessed.
 
 <b>Battery</b>
-No polling and no wake locks. It wakes only when an SMS arrives, plus one inexact alarm at midnight.
+No polling, no wake locks, no alarm sounds. It wakes only when an SMS arrives, plus one silent system timer after midnight.
