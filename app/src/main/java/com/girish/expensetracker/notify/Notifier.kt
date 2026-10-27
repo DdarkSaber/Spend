@@ -90,7 +90,8 @@ object Notifier {
     private fun postAlerts(context: Context, repo: Repo, snap: Snapshot) {
         val alerts = Alerts.credit(snap.cards, snap.today, ::sourceLabel, ::rupees) { it.format(dayMonth) } +
             Alerts.budgets(snap.budgets, snap.cycleStart, ::rupees) +
-            Alerts.subscriptions(snap.subscriptions, snap.today, ::rupees)
+            Alerts.subscriptions(snap.subscriptions, snap.today, ::rupees) +
+            snap.unusual.filter { !it.day.isBefore(snap.today.minusDays(2)) }.map { com.girish.expensetracker.core.Alert(it.key, it.title, it.text) }
         val sent = repo.alertsSent()
         val fresh = alerts.filter { it.key !in sent }
         if (fresh.isEmpty()) return

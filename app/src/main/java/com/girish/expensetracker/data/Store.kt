@@ -8,7 +8,9 @@ import com.girish.expensetracker.core.PayeeRules
 import com.girish.expensetracker.core.PayeeType
 import com.girish.expensetracker.core.Source
 import com.girish.expensetracker.core.SourceType
+import com.girish.expensetracker.core.LearnedLayout
 import com.girish.expensetracker.core.SplitShare
+import com.girish.expensetracker.core.Trip
 import com.girish.expensetracker.core.ruleKey
 import java.time.LocalDate
 
@@ -20,7 +22,7 @@ data class StatementRow(val day: LocalDate, val amountPaise: Long, val debit: Bo
  * The database keeps only raw inputs: bank SMS exactly as received, the user's retags, cash entries and extra tracked cards.
  * Everything else (kinds, categories, totals) is recomputed from these, so a parser fix also fixes old history.
  */
-class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, 4) {
+class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, 5) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -37,6 +39,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, 4) {
         createSettings(db)
         createOverrides(db)
         createStatementRows(db)
+        createV5(db)
     }
 
     // v2 adds owner settings; nothing existing is touched, so an upgrade keeps every stored SMS, retag and cash entry.
@@ -44,6 +47,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, 4) {
         if (oldVersion < 2) createSettings(db)
         if (oldVersion < 3) createOverrides(db)
         if (oldVersion < 4) createStatementRows(db)
+        if (oldVersion < 5) createV5(db)
     }
 
     /** v4: rows imported from a bank statement file, and split payments. */
@@ -121,7 +125,47 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, 4) {
         writableDatabase.insertWithOnConflict("split", null, ContentValues().apply { put("row_key", rowKey); put("shares", arr.toString()) }, SQLiteDatabase.CONFLICT_REPLACE)
     }
 
-    private val tables = listOf("sms", "rule", "manual", "tracked", "settings", "override", "stmt", "split")
+    /** v5: trips (named date ranges), a free-text tag per payment, and SMS layouts the owner taught. */
+    private fun createV5(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS trip (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, start TEXT NOT NULL, finish TEXT NOT NULL)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS tag (row_key TEXT PRIMARY KEY, tag TEXT NOT NULL)")
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS learned (id INTEGER PRIMARY KEY AUTOINCREMENT, bank TEXT NOT NULL, pattern TEXT NOT NULL, " +
+                "roles TEXT NOT NULL, debit INTEGER NOT NULL, card INTEGER NOT NULL)"
+        )
+    }
+
+    fun trips(): List<Trip> = readableDatabase.rawQuery("SELECT id, name, start, finish FROM trip ORDER BY start DESC", null).use { c ->
+        buildList { while (c.moveToNext()) add(Trip(c.getLong(0), c.getString(1), LocalDate.parse(c.getString(2)), LocalDate.parse(c.getString(3)))) }
+    }
+
+    fun addTrip(name: String, start: LocalDate, end: LocalDate) {
+        writableDatabase.insert("trip", null, ContentValues().apply { put("name", name); put("start", start.toString()); put("finish", end.toString()) })
+    }
+
+    fun deleteTrip(id: Long) { writableDatabase.delete("trip", "id = ?", arrayOf(id.toString())) }
+
+    fun tags(): Map<String, String> = readableDatabase.rawQuery("SELECT row_key, tag FROM tag", null).use { c ->
+        buildMap { while (c.moveToNext()) put(c.getString(0), c.getString(1)) }
+    }
+
+    /** A blank tag removes it. */
+    fun setTag(rowKey: String, tag: String) {
+        if (tag.isBlank()) writableDatabase.delete("tag", "row_key = ?", arrayOf(rowKey))
+        else writableDatabase.insertWithOnConflict("tag", null, ContentValues().apply { put("row_key", rowKey); put("tag", tag.trim()) }, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
+    fun learned(): List<LearnedLayout> = readableDatabase.rawQuery("SELECT bank, pattern, roles, debit, card FROM learned ORDER BY id DESC", null).use { c ->
+        buildList { while (c.moveToNext()) add(LearnedLayout(c.getString(0), c.getString(1), c.getString(2), c.getInt(3) == 1, c.getInt(4) == 1)) }
+    }
+
+    fun addLearned(l: LearnedLayout) {
+        writableDatabase.insert("learned", null, ContentValues().apply {
+            put("bank", l.bank); put("pattern", l.pattern); put("roles", l.roles); put("debit", if (l.debit) 1 else 0); put("card", if (l.card) 1 else 0)
+        })
+    }
+
+    private val tables = listOf("sms", "rule", "manual", "tracked", "settings", "override", "stmt", "split", "trip", "tag", "learned")
 
     /** Every table as JSON rows, for an encrypted backup. */
     fun dump(): org.json.JSONObject = org.json.JSONObject().apply {

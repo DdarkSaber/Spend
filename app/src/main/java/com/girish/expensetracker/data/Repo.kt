@@ -7,6 +7,16 @@ import com.girish.expensetracker.core.CardHealth
 import com.girish.expensetracker.core.CardStatement
 import com.girish.expensetracker.core.Classifier
 import com.girish.expensetracker.core.Credit
+import com.girish.expensetracker.core.Emi
+import com.girish.expensetracker.core.Emis
+import com.girish.expensetracker.core.Holding
+import com.girish.expensetracker.core.Investments
+import com.girish.expensetracker.core.LearnedLayout
+import com.girish.expensetracker.core.Savings
+import com.girish.expensetracker.core.SavingsMonth
+import com.girish.expensetracker.core.Trip
+import com.girish.expensetracker.core.Unusual
+import com.girish.expensetracker.core.UnusualSpend
 import com.girish.expensetracker.core.Debt
 import com.girish.expensetracker.core.Owe
 import com.girish.expensetracker.core.SplitShare
@@ -58,6 +68,11 @@ data class Snapshot(
     val plan: Plan = Plan(),
     /** Who still owes the owner money, from loans and splits. */
     val debts: List<Debt> = emptyList(),
+    /** Foreign-currency charges seen in the last week (they can't be counted in rupees, so they are flagged). */
+    val foreign: List<Unusual> = emptyList(),
+    /** Row key -> the owner's tag ("Goa trip", "office"). */
+    val tags: Map<String, String> = emptyMap(),
+    val trips: List<Trip> = emptyList(),
 ) {
     val txns: List<Txn> by lazy { rows.map { it.txn } }
     val todayTotal: Long by lazy { Ledger.today(txns, today) }
@@ -74,6 +89,17 @@ data class Snapshot(
     val budgets: List<BudgetLine> by lazy { Budgets.lines(txns, cycleStart, today, plan.budgetTotal, plan.budgetByCategory) }
 
     val subscriptions: List<Subscription> by lazy { Subscriptions.find(txns, today) }
+
+    /** Double charges, unusually large payments and foreign charges from the last week. */
+    val unusual: List<Unusual> by lazy { (foreign + UnusualSpend.find(txns, today, money = { com.girish.expensetracker.ui.rupees(it) })).sortedByDescending { it.day } }
+
+    val savings: List<SavingsMonth> by lazy { Savings.months(txns, Ledger.cycles(today, txns, 6)) }
+
+    val emis: List<Emi> by lazy { Emis.find(txns, today) }
+
+    val holdings: List<Holding> by lazy { Investments.holdings(txns, cycleStart) }
+
+    fun tagOf(row: Row): String? = (row.smsId?.let { "sms:$it" } ?: row.manualId?.let { "cash:$it" })?.let(tags::get)
 }
 
 /** What the owner set by hand: card limits and statement days, and budgets. Amounts in paise. */
@@ -114,7 +140,7 @@ class Repo(val store: Store) {
 
     /** Store an SMS if it comes from a bank transaction sender. Returns true when it was new. */
     fun ingest(sender: String, body: String, receivedAt: Long): Boolean {
-        return when (SmsReader.read(sender, body, profile())) {
+        return when (SmsReader.read(sender, body, profile(), store.learned())) {
             ReadResult.NotBank, ReadResult.Promo -> false
             // Informational bank SMS are kept too: a future layout may turn them into transactions.
             else -> store.insertSms(sender, body, receivedAt)
@@ -193,6 +219,8 @@ class Repo(val store: Store) {
         val overrides = store.overrides()
         val splits = store.splits()
         val settledLoans = lines(KEY_SETTLED_LOANS)
+        val learned = store.learned()
+        val foreign = mutableListOf<Unusual>()
         val dismissedRent = lines(KEY_RENT_DISMISSED)
         val rentPayees = lines(KEY_RENT).mapNotNull { l -> l.split('|').takeIf { it.size == 2 }?.let { it[0] to (it[1].toLongOrNull() ?: 0L) } }
 
@@ -213,7 +241,10 @@ class Repo(val store: Store) {
             // Statement and limit SMS move no money but tell how each credit card stands.
             CardFacts.statement(sms.sender, sms.body, at)?.let { statements += it }
             CardFacts.limit(sms.sender, sms.body, at)?.let { limits += it }
-            when (val r = SmsReader.read(sms.sender, sms.body, profile)) {
+            if (at.toLocalDate() >= today.minusDays(7)) {
+                SmsReader.bankOf(sms.sender)?.let { bank -> UnusualSpend.foreignCharge(bank, sms.body, at)?.let { foreign += it } }
+            }
+            when (val r = SmsReader.read(sms.sender, sms.body, profile, learned)) {
                 is ReadResult.Parsed -> {
                     var t = Classifier.classify(r.parsed, at, profile, rules)
                     val forced = overrides[sms.id]
@@ -275,8 +306,16 @@ class Repo(val store: Store) {
             limitsSeen = limits,
             plan = plan(),
             debts = owe.debts,
+            foreign = foreign,
+            tags = store.tags(),
+            trips = store.trips(),
         )
     }
+
+    /** Save a layout taught from an unread SMS; that SMS and every later one like it are read from now on. */
+    fun teach(layout: LearnedLayout) = store.addLearned(layout)
+
+    fun setTag(row: Row, tag: String) { rowKey(row)?.let { store.setTag(it, tag) } }
 
     /** Row key for splits: SMS rows and cash entries can be split; imported statement rows cannot. */
     fun rowKey(row: Row): String? = row.smsId?.let { "sms:$it" } ?: row.manualId?.let { "cash:$it" }

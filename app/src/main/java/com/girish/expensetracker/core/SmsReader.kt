@@ -92,7 +92,7 @@ object SmsReader {
         RegexOption.IGNORE_CASE,
     )
 
-    fun read(sender: String, body: String, profile: Profile): ReadResult {
+    fun read(sender: String, body: String, profile: Profile, learned: List<LearnedLayout> = emptyList()): ReadResult {
         val header = dltHeader.matchEntire(sender.trim()) ?: return ReadResult.NotBank
         val entity = header.groupValues[1].uppercase()
         val type = header.groupValues[2].uppercase()
@@ -104,7 +104,10 @@ object SmsReader {
         if (informationalPhrases.any { it in lower }) return ReadResult.Informational
 
         // Exact layouts first; for other banks (and new layouts of known ones) the generic phrasing rules.
-        val parsed = Layouts.parse(text) ?: Generic.parse(text, bank)
+        val parsed = Layouts.parse(text)
+            // Layouts the owner taught by tapping an SMS come before the generic guesses.
+            ?: learned.asSequence().filter { it.bank == bank }.firstNotNullOfOrNull { Teach.parse(it, text) }
+            ?: Generic.parse(text, bank)
         if (parsed == null) {
             if (promoPhrases.any { it in lower }) return ReadResult.Promo
             return if (looksTransactional.containsMatchIn(text)) ReadResult.Unparsed(text) else ReadResult.Informational

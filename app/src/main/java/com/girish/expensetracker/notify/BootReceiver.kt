@@ -12,6 +12,7 @@ class BootReceiver : BroadcastReceiver() {
             Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> SpendService.start(context)
             Intent.ACTION_TIME_CHANGED, Intent.ACTION_TIMEZONE_CHANGED -> {
                 MidnightReceiver.schedule(context)
+                Digest.schedule(context)
                 val pending = goAsync()
                 thread(name = "clock-changed") {
                     try {

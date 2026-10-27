@@ -57,7 +57,12 @@ fun PeoplePreview() = Shell(Tab.PEOPLE) { PeopleScreen(demo) {} }
 @Preview(name = "More", showSystemUi = true, device = Devices.PIXEL_7)
 @Composable
 fun MorePreview() = Shell(Tab.MORE) {
-    MoreScreen(demo, Setup(sms = true, notifications = true, batteryUnrestricted = false), demoIsNew, {}, {}, {}, {}, {}, {})
+    val none = {}
+    MoreScreen(
+        demo, Setup(sms = true, notifications = true, batteryUnrestricted = false), demoIsNew, {},
+        MoreActions(none, none, none, none, none, none, none, none, none, none, {}, {}, none),
+        MoreSettings("dark", {}, false, {}, false, {}, com.girish.expensetracker.data.AutoBackup.State(false, 0L, null)),
+    )
 }
 
 @Preview(name = "Setup", showSystemUi = true, device = Devices.PIXEL_7)

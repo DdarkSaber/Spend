@@ -18,6 +18,7 @@ class SpendService : Service() {
         // Must be immediate (Android gives a foreground service a few seconds): the cached text needs no database.
         startForeground(Notifier.ID, Notifier.cached(this), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         MidnightReceiver.schedule(this)
+        Digest.schedule(this)
         thread(name = "notify-refresh") { Notifier.refresh(applicationContext) }
         return START_STICKY
     }

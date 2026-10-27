@@ -36,6 +36,8 @@ class MainActivity : ComponentActivity() {
         }
 
     // "system", "dark" or "light"; dark is the default look, light follows the phone when set to system.
+    private val lock by lazy { AppLock(this) }
+
     private val theme by lazy { mutableStateOf(getSharedPreferences("ui", MODE_PRIVATE).getString("theme", "dark") ?: "dark") }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -52,6 +54,10 @@ class MainActivity : ComponentActivity() {
                 enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
             }
             SpendTheme(dark = dark) {
+                if (lock.locked.value) {
+                    LockScreen(onUnlock = lock::unlock)
+                    return@SpendTheme
+                }
                 AppRoot(
                     tick = tick.intValue,
                     setup = setup(),
@@ -63,9 +69,21 @@ class MainActivity : ComponentActivity() {
                         theme.value = v
                         getSharedPreferences("ui", MODE_PRIVATE).edit().putString("theme", v).apply()
                     },
+                    lockOn = lock.enabled.value,
+                    onLock = lock::setEnabled,
                 )
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        lock.onStart()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        lock.onStop()
     }
 
     override fun onResume() {

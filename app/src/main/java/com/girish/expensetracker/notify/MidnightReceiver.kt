@@ -17,6 +17,8 @@ class MidnightReceiver : BroadcastReceiver() {
         thread(name = "midnight") {
             try {
                 Notifier.refresh(context)
+                // Weekly encrypted backup to the owner's chosen file (e.g. Google Drive), riding on this same wake-up.
+                com.girish.expensetracker.data.AutoBackup.runIfDue(context, (context.applicationContext as com.girish.expensetracker.SpendApp).repo.store)
                 schedule(context)
             } finally {
                 pending.finish()
