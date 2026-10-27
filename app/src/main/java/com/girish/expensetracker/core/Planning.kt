@@ -138,6 +138,16 @@ object Alerts {
             }
         }
 
+    /** A subscription that just charged more than last time (within the past week, so old rises don't alert). */
+    fun subscriptions(subs: List<Subscription>, today: LocalDate, money: (Long) -> String): List<Alert> =
+        subs.filter { it.priceUp && !it.lastDay.isBefore(today.minusDays(7)) }.map { s ->
+            Alert(
+                "price|${normalizeName(s.name)}|${s.lastDay}",
+                "${s.name} went up to ${money(s.lastPaise)}",
+                "Was ${money(s.previousPaise!!)}. That's ${money(if (s.yearly) s.lastPaise - s.previousPaise else (s.lastPaise - s.previousPaise) * 12)} more a year.",
+            )
+        }
+
     fun budgets(lines: List<BudgetLine>, cycleStart: LocalDate, money: (Long) -> String): List<Alert> = lines.flatMap { b ->
         val what = b.category ?: "This month"
         val id = "${b.category ?: "ALL"}|$cycleStart"

@@ -42,6 +42,26 @@ class OweTest {
         assertTrue(s.debts.isEmpty())
     }
 
+    @Test fun biggerPaymentClearsDebtButStillLowersSpend() {
+        val dinner = pay("2026-10-10", 354, "CAFE", split = listOf(SplitShare("Ravi", 118_00, label = "ravi@oksbi")))
+        val s = Owe.settle(listOf(dinner, got("2026-10-12", 2000, "ravi@oksbi")))
+        assertEquals(Kind.PERSON_CREDIT, s.txns[1].kind)
+        assertTrue(s.debts.isEmpty())
+    }
+
+    @Test fun cashbackIsNotARefund() {
+        val p = Profile(setOf(acct), emptySet(), emptySet(), emptySet())
+        val t = Classifier.classify(ParsedSms(Template.HDFC_UPI_CREDIT, Direction.CREDIT, 50_00, acct, "gpaycashback@okaxis", LocalDate.of(2026, 10, 1), null, null), LocalDate.of(2026, 10, 1).atTime(9, 0), p)
+        assertEquals(Kind.INCOME, t.kind)
+        assertEquals(0L, Ledger.monthAmount(t))
+    }
+
+    @Test fun priceRiseAlertOnlyWhenRecent() {
+        val s = Subscription("NETFLIX", "Subscriptions", acct, 799_00, 649_00, LocalDate.of(2026, 10, 5), LocalDate.of(2026, 11, 5), false, 3)
+        assertEquals("NETFLIX went up to 799", Alerts.subscriptions(listOf(s), LocalDate.of(2026, 10, 8)) { "${it / 100}" }.single().title)
+        assertTrue(Alerts.subscriptions(listOf(s), LocalDate.of(2026, 10, 20)) { "${it / 100}" }.isEmpty())
+    }
+
     @Test fun settledShareIsNotOwed() {
         val t = pay("2026-10-10", 900, "PVR", split = listOf(SplitShare("Anu", 300_00, settled = true), SplitShare("Kiran", 300_00)))
         assertEquals(listOf("Kiran"), Owe.settle(listOf(t)).debts.map { it.name })

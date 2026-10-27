@@ -7,7 +7,7 @@ object Classifier {
 
     private val cardBillPayees = listOf("SBI CARDS", "SBICARD", "CRED", "HDFC CREDIT CARD", "ICICI CREDIT CARD", "CREDIT CARD")
     private val investmentPayees = listOf("GROWW", "GR0WW", "INDIAN CLEARING", "ZERODHA", "UPSTOX", "BSE", "NSE CLEARING", "MUTUAL FUND", "ICCL")
-    private val refundWords = listOf("REFUND", "CASHBACK", "PLAYSTORE", "GOOGLE", "AMAZON", "FLIPKART", "PAYTM", "RAZORPAY", "BILLDESK")
+    private val refundWords = listOf("REFUND", "PLAYSTORE", "GOOGLE", "AMAZON", "FLIPKART", "PAYTM", "RAZORPAY", "BILLDESK")
 
     fun classify(p: ParsedSms, receivedAt: LocalDateTime, profile: Profile, payeeRules: PayeeRules = PayeeRules.EMPTY): Txn {
         val name = p.counterparty.orEmpty()
@@ -52,6 +52,8 @@ object Classifier {
                 // Money back from an investment platform is a payout, not a friend repaying you.
                 investmentPayees.any { it in payer } -> txn(Kind.INCOME, category = "Money in")
                 // Refunds and merchant credits (GPay refund, Play Store, a shop) reduce spend but are not people.
+                // Cashback is a reward, not money back for a purchase: it never lowers spend (owner's rule).
+                "CASHBACK" in payer || "CASHBACK" in narration -> txn(Kind.INCOME, category = "Cashback")
                 refundWords.any { it in payer } || PayeeGuess.isMerchantLike(payer) -> txn(Kind.REFUND, PayeeType.MERCHANT, "Refund")
                 else -> txn(Kind.PERSON_CREDIT, PayeeType.PERSON)
             }
@@ -83,6 +85,8 @@ object Classifier {
                 profile.isSelfVpa(name) || profile.isSelfName(name) -> txn(Kind.TRANSFER)
                 payeeRules.lookup(name)?.type == PayeeType.MERCHANT -> txn(Kind.REFUND, PayeeType.MERCHANT, "Refund")
                 investmentPayees.any { it in payer } -> txn(Kind.INCOME, category = "Money in")
+                // Cashback is a reward, not money back for a purchase: it never lowers spend (owner's rule).
+                "CASHBACK" in payer || "CASHBACK" in narration -> txn(Kind.INCOME, category = "Cashback")
                 refundWords.any { it in payer } || PayeeGuess.isMerchantLike(payer) -> txn(Kind.REFUND, PayeeType.MERCHANT, "Refund")
                 // A statement credit with a name could be anything (a salary, a sale): kept out of spend unless it's a person.
                 p.template == Template.STATEMENT_CREDIT && PayeeGuess.type(name) != PayeeType.PERSON -> txn(Kind.INCOME, category = "Money in")
