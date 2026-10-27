@@ -1,6 +1,18 @@
 package com.girish.expensetracker.data
 
+import com.girish.expensetracker.core.BudgetLine
+import com.girish.expensetracker.core.Budgets
+import com.girish.expensetracker.core.CardFacts
+import com.girish.expensetracker.core.CardHealth
+import com.girish.expensetracker.core.CardStatement
 import com.girish.expensetracker.core.Classifier
+import com.girish.expensetracker.core.Credit
+import com.girish.expensetracker.core.Generic
+import com.girish.expensetracker.core.Kind
+import com.girish.expensetracker.core.LimitSeen
+import com.girish.expensetracker.core.People
+import com.girish.expensetracker.core.Subscription
+import com.girish.expensetracker.core.Subscriptions
 import com.girish.expensetracker.core.Dedupe
 import com.girish.expensetracker.core.DetectedProfile
 import com.girish.expensetracker.core.DetectedSource
@@ -38,12 +50,36 @@ data class Snapshot(
     val today: LocalDate,
     val owner: Owner? = null,
     val rentCandidates: List<com.girish.expensetracker.core.RentCandidate> = emptyList(),
+    val statements: List<CardStatement> = emptyList(),
+    val limitsSeen: List<LimitSeen> = emptyList(),
+    val plan: Plan = Plan(),
 ) {
     val txns: List<Txn> by lazy { rows.map { it.txn } }
     val todayTotal: Long by lazy { Ledger.today(txns, today) }
     val monthTotal: Long by lazy { Ledger.month(txns, today) }
     val cycleStart: LocalDate by lazy { Ledger.cycleStart(today, txns) }
+
+    /** Every tracked credit card (or, before setup, every card seen) with its utilisation and bill. */
+    val cards: List<CardHealth> by lazy {
+        val tracked = owner?.tracked?.filter { it.type == SourceType.CARD && it.last4 != "*" }
+            ?: txns.map { it.parsed.source }.filter { it.type == SourceType.CARD && it.last4 != "*" }.distinct()
+        tracked.map { c -> Credit.health(c, txns, statements, limitsSeen, plan.cardLimits[sourceKey(c)], plan.statementDays[sourceKey(c)], today) }
+    }
+
+    val budgets: List<BudgetLine> by lazy { Budgets.lines(txns, cycleStart, today, plan.budgetTotal, plan.budgetByCategory) }
+
+    val subscriptions: List<Subscription> by lazy { Subscriptions.find(txns, today) }
 }
+
+/** What the owner set by hand: card limits and statement days, and budgets. Amounts in paise. */
+data class Plan(
+    val cardLimits: Map<String, Long> = emptyMap(),
+    val statementDays: Map<String, Int> = emptyMap(),
+    val budgetTotal: Long? = null,
+    val budgetByCategory: Map<String, Long> = emptyMap(),
+)
+
+fun sourceKey(s: Source) = "${s.bank}|${s.last4}|${s.type}"
 
 /** Who owns this phone, as far as the app knows: "none" before the first import, "detected", then "confirmed". */
 data class Owner(val state: String, val displayName: String, val salaryDay: Int, val tracked: Set<Source>)
@@ -57,6 +93,11 @@ private const val KEY_IGNORED = "ignored_sources"
 private const val KEY_RENT = "rent_payees"
 private const val KEY_RENT_DISMISSED = "rent_dismissed"
 private const val KEY_IMPORTED = "imported"
+private const val KEY_CARD_LIMITS = "card_limits"
+private const val KEY_STATEMENT_DAYS = "statement_days"
+private const val KEY_BUDGET_TOTAL = "budget_total"
+private const val KEY_BUDGETS = "budgets"
+private const val KEY_ALERTS_SENT = "alerts_sent"
 
 class Repo(val store: Store) {
 
@@ -93,7 +134,7 @@ class Repo(val store: Store) {
         tracked = store.tracked(),
     )
 
-    private fun key(s: Source) = "${s.bank}|${s.last4}|${s.type}"
+    private fun key(s: Source) = sourceKey(s)
 
     private fun lines(key: String) = store.setting(key)?.split('\n')?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
 
@@ -150,6 +191,8 @@ class Repo(val store: Store) {
         val rows = mutableListOf<Row>()
         val unparsed = mutableListOf<UnparsedSms>()
         val newSources = linkedMapOf<Source, String>()
+        val statements = mutableListOf<CardStatement>()
+        val limits = mutableListOf<LimitSeen>()
 
         // Older installs may hold the same SMS twice (live + import, slightly different stamps): read it once.
         val lastSeen = HashMap<String, Long>()
@@ -159,11 +202,19 @@ class Repo(val store: Store) {
             lastSeen[dupKey] = sms.receivedAt
             if (prev != null && kotlin.math.abs(sms.receivedAt - prev) < 600_000L) continue
             val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(sms.receivedAt), zone)
+            // Statement and limit SMS move no money but tell how each credit card stands.
+            CardFacts.statement(sms.sender, sms.body, at)?.let { statements += it }
+            CardFacts.limit(sms.sender, sms.body, at)?.let { limits += it }
             when (val r = SmsReader.read(sms.sender, sms.body, profile)) {
                 is ReadResult.Parsed -> {
                     var t = Classifier.classify(r.parsed, at, profile, rules)
                     val forced = overrides[sms.id]
-                    if (forced != null && t.kind == com.girish.expensetracker.core.Kind.SPEND) t = t.copy(category = forced.second, payeeType = forced.first ?: t.payeeType)
+                    if (forced != null && (t.kind == Kind.SPEND || t.kind == Kind.LENT)) {
+                        t = t.copy(
+                            category = forced.second, payeeType = forced.first ?: t.payeeType,
+                            kind = if (forced.second == Classifier.LENT) Kind.LENT else Kind.SPEND,
+                        )
+                    }
                     else if (forced == null && rentPayees.any { (label, typical) -> com.girish.expensetracker.core.RentFinder.isRent(t, label, typical) }) t = t.copy(category = "Rent")
                     rows += Row(t, sms.id, null, sms.body)
                 }
@@ -179,10 +230,24 @@ class Repo(val store: Store) {
             rows += Row(Classifier.classify(parsed, at, profile, rules), null, m.id, null)
         }
 
+        // Imported statement rows fill history from before the app; a row the SMS already covers is skipped.
+        val fromSms = rows.toList()
+        for ((source, s) in store.statementRowsSince(since)) {
+            val covered = fromSms.any { r ->
+                r.txn.parsed.source == source && r.txn.amountPaise == s.amountPaise &&
+                    kotlin.math.abs(java.time.temporal.ChronoUnit.DAYS.between(r.txn.day, s.day)) <= 2
+            }
+            if (covered) continue
+            val dir = if (s.debit) Direction.DEBIT else Direction.CREDIT
+            val other = Generic.counterparty(s.description, dir) ?: s.description.take(40).ifBlank { null }
+            val parsed = ParsedSms(if (s.debit) Template.STATEMENT_DEBIT else Template.STATEMENT_CREDIT, dir, s.amountPaise, source, other, s.day, null, s.description)
+            rows += Row(Classifier.classify(parsed, s.day.atTime(12, 0), profile, rules), null, null, s.description)
+        }
+
         rows.sortBy { it.txn.receivedAt }
         // Match by object identity: two real identical SIPs are equal as data but are separate payments.
         val rowByParsed = java.util.IdentityHashMap<ParsedSms, Row>().apply { rows.forEach { put(it.txn.parsed, it) } }
-        val deduped = Dedupe.apply(rows.map { it.txn }).map { kept -> rowByParsed.getValue(kept.parsed).copy(txn = kept) }
+        val deduped = settleLoans(Dedupe.apply(rows.map { it.txn }).map { kept -> rowByParsed.getValue(kept.parsed).copy(txn = kept) })
 
         return Snapshot(
             rows = deduped,
@@ -191,7 +256,72 @@ class Repo(val store: Store) {
             today = today,
             owner = owner(),
             rentCandidates = com.girish.expensetracker.core.RentFinder.find(deduped.map { it.txn }).filter { it.key !in dismissedRent },
+            statements = statements,
+            limitsSeen = limits,
+            plan = plan(),
         )
+    }
+
+    /**
+     * Money marked as lent is not spend; when that person later pays you, the payment settles the loan (shown as
+     * Repaid) instead of reducing your spend. Rows must be in time order.
+     */
+    private fun settleLoans(rows: List<Row>): List<Row> {
+        if (rows.none { it.txn.kind == Kind.LENT }) return rows
+        val labels = rows.filter { it.txn.payeeType == PayeeType.PERSON }.mapNotNull { it.txn.parsed.counterparty }.distinct()
+        val personOf = People.group(labels).flatMap { group -> group.map { it to group.first() } }.toMap()
+        val owed = HashMap<String, Long>()
+        return rows.map { r ->
+            val who = r.txn.parsed.counterparty?.let(personOf::get) ?: return@map r
+            when (r.txn.kind) {
+                Kind.LENT -> { owed[who] = (owed[who] ?: 0L) + r.txn.amountPaise; r }
+                Kind.PERSON_CREDIT -> {
+                    val left = owed[who] ?: 0L
+                    if (left <= 0) r else {
+                        owed[who] = (left - r.txn.amountPaise).coerceAtLeast(0L)
+                        r.copy(txn = r.txn.copy(kind = Kind.REPAID, category = "Repaid"))
+                    }
+                }
+                else -> r
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------- owner's plan: limits, statement days, budgets
+
+    private fun keyed(key: String): Map<String, Long> =
+        lines(key).mapNotNull { l -> l.substringAfterLast('=').toLongOrNull()?.let { l.substringBeforeLast('=') to it } }.toMap()
+
+    private fun saveKeyed(key: String, map: Map<String, Long>) =
+        store.setSetting(key, map.entries.joinToString("\n") { "${it.key}=${it.value}" })
+
+    fun plan() = Plan(
+        cardLimits = keyed(KEY_CARD_LIMITS),
+        statementDays = keyed(KEY_STATEMENT_DAYS).mapValues { it.value.toInt() },
+        budgetTotal = store.setting(KEY_BUDGET_TOTAL)?.toLongOrNull()?.takeIf { it > 0 },
+        budgetByCategory = keyed(KEY_BUDGETS),
+    )
+
+    /** null clears it (back to the estimate from SMS). */
+    fun setCardLimit(card: Source, paise: Long?) =
+        saveKeyed(KEY_CARD_LIMITS, keyed(KEY_CARD_LIMITS).let { if (paise == null) it - key(card) else it + (key(card) to paise) })
+
+    fun setStatementDay(card: Source, day: Int?) =
+        saveKeyed(KEY_STATEMENT_DAYS, keyed(KEY_STATEMENT_DAYS).let { if (day == null) it - key(card) else it + (key(card) to day.toLong()) })
+
+    /** [category] null is the whole salary month; [paise] null or 0 removes the budget. */
+    fun setBudget(category: String?, paise: Long?) {
+        if (category == null) store.setSetting(KEY_BUDGET_TOTAL, (paise ?: 0L).toString())
+        else saveKeyed(KEY_BUDGETS, keyed(KEY_BUDGETS).let { if (paise == null || paise <= 0) it - category else it + (category to paise) })
+    }
+
+    /** Alerts are posted once each; the newest 300 keys are remembered. */
+    fun alertsSent(): Set<String> = lines(KEY_ALERTS_SENT)
+
+    fun markAlertsSent(keys: Collection<String>) {
+        if (keys.isEmpty()) return
+        val all = (store.setting(KEY_ALERTS_SENT)?.split('\n').orEmpty().filter { it.isNotBlank() } + keys).distinct().takeLast(300)
+        store.setSetting(KEY_ALERTS_SENT, all.joinToString("\n"))
     }
 
     fun retag(payee: String, type: PayeeType, category: String) = store.setRule(payee, type, category)

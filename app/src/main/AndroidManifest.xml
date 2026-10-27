@@ -64,5 +64,16 @@
         <receiver
             android:name=".notify.MidnightReceiver"
             android:exported="false" />
+
+        <receiver
+            android:name=".notify.SpendWidget"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_spend_info" />
+        </receiver>
     </application>
 </manifest>

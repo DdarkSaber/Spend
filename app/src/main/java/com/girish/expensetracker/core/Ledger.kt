@@ -121,7 +121,7 @@ object Ledger {
             .mapValues { (_, list) -> list.sumOf(::monthAmount) }
 
     /** Recurring money (SIPs, lump sums, subscriptions) is left out of the pace line so the 2nd of the month doesn't spike it. */
-    private fun paceAmount(t: Txn): Long = when (t.kind) {
+    fun paceAmount(t: Txn): Long = when (t.kind) {
         Kind.SUBSCRIPTION, Kind.INVESTMENT_SIP, Kind.INVESTMENT_LUMPSUM -> 0
         else -> monthAmount(t)
     }

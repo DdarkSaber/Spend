@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- No periodic updates: the app pushes new numbers when an SMS arrives and at midnight. -->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="180dp"
+    android:minHeight="56dp"
+    android:targetCellWidth="3"
+    android:targetCellHeight="1"
+    android:resizeMode="horizontal"
+    android:updatePeriodMillis="0"
+    android:initialLayout="@layout/widget_spend"
+    android:previewLayout="@layout/widget_spend"
+    android:description="@string/widget_description"
+    android:widgetCategory="home_screen" />
