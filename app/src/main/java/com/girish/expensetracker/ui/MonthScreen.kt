@@ -93,13 +93,12 @@ internal fun MonthScreen(
         item { Segmented(listOf("Overview", "Trends", "Recurring"), view, { view = it }) }
         if (view == 0) {
             item { MonthSwitcher(range, running, canBack = monthIndex < months.lastIndex, onBack = { showMonth(monthIndex + 1) }, onNext = { showMonth(monthIndex - 1) }) }
+            // The same summary for every month, salary included; the running month adds its budget and pace.
+            item { MonthSummary(report, running) }
             if (running) {
-                item { SalaryCard(snap) }
                 item { BudgetPanel(snap.budgets, onBudgets) }
                 snap.rentCandidates.forEach { c -> item { RentCard(c, onMark = { onRent(c, true) }, onDismiss = { onRent(c, false) }) } }
                 if (snap.rows.isNotEmpty()) item { PaceChart(snap) }
-            } else {
-                item { MonthSummary(report) }
             }
             item {
                 Panel {
@@ -175,6 +174,7 @@ internal fun MonthScreen(
         if (view == 1) {
             // Trends bars are oldest-left; "open" jumps Overview to that month.
             item { MonthsBars(snap, withInvestments, isNew, onRow, onOpenMonth = { start -> months.indexOfFirst { it.start == start }.takeIf { it >= 0 }?.let { showMonth(it); view = 0 } }) }
+            item { SalaryHistory(snap) }
             item { SavingsPanel(snap.savings) }
             item { YearPanel(snap) }
         }
@@ -192,50 +192,34 @@ internal fun MonthScreen(
 /** The latest salary credit (detected from the NEFT narration), if any. */
 internal fun lastSalary(snap: Snapshot): Row? = snap.rows.filter { it.txn.isSalary }.maxByOrNull { it.txn.day }
 
-/** Salary credited this salary month, what has gone out, and what is left; earlier salaries below. */
+/** Every salary credit, newest first, with the change from the one before (a raise shows up here). */
 @Composable
-private fun SalaryCard(snap: Snapshot) {
+private fun SalaryHistory(snap: Snapshot) {
     val t = LocalTones.current
-    val salaries = snap.rows.filter { it.txn.isSalary }.sortedByDescending { it.txn.day }
-    val current = salaries.firstOrNull { it.txn.day >= snap.cycleStart }
-    Panel {
-        PanelHeader("Salary", chevron = true)
+    val salaries = remember(snap) { snap.rows.filter { it.txn.isSalary }.sortedByDescending { it.txn.day } }
+    Panel(padding = PaddingValues(start = 18.dp, end = 18.dp, top = 18.dp, bottom = 8.dp)) {
+        PanelHeader("Salary history", salaries.firstOrNull()?.let { sourceLabel(it.txn.parsed.source) })
         if (salaries.isEmpty()) {
-            Text("No salary credit found yet. It shows up here when your bank's NEFT SMS says SALARY.", style = MaterialTheme.typography.bodyMedium, color = t.ink2)
+            Text("No salary credit found yet. It shows up here when your bank's NEFT SMS says SALARY.", style = MaterialTheme.typography.bodyMedium, color = t.ink2,
+                modifier = Modifier.padding(bottom = 10.dp))
             return@Panel
         }
-        val salary = (current ?: salaries.first()).txn
-        val spent = snap.monthTotal
-        RollingAmount(salary.amountPaise, MaterialTheme.typography.displaySmall.copy(fontWeight = androidx.compose.ui.text.font.FontWeight(700), fontFeatureSettings = "tnum"), t.ink)
-        Text(
-            (if (current != null) "credited " else "last credited ") + salary.day.format(DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH)) + " · " + sourceLabel(salary.parsed.source),
-            style = MaterialTheme.typography.bodySmall, color = t.ink2,
-        )
-        if (current != null) {
-            Gap(16.dp)
-            val used = (spent.toFloat() / salary.amountPaise).coerceIn(0f, 1f)
-            Box(Modifier.fillMaxWidth().height(10.dp).clip(CircleShape).background(t.raised)) {
-                Box(Modifier.fillMaxWidth(used).fillMaxHeight().clip(CircleShape).background(if (spent > salary.amountPaise) t.warn else t.accent))
-            }
-            Gap(10.dp)
-            Row(Modifier.fillMaxWidth()) {
+        salaries.take(12).forEachIndexed { k, r ->
+            if (k > 0) Hairline()
+            val before = salaries.getOrNull(k + 1)?.txn?.amountPaise
+            val change = before?.let { r.txn.amountPaise - it }
+            Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(rupees(spent), style = AmountStyle, color = t.ink)
-                    Text("spent so far (${(used * 100).toInt()}%)", style = MaterialTheme.typography.labelMedium, color = t.ink2)
+                    Text(cycleMonth(r.txn.day.plusDays(1)) + " " + r.txn.day.year, style = MaterialTheme.typography.titleSmall, color = t.ink)
+                    Text("credited ${r.txn.day.format(dayMonth)}", style = MaterialTheme.typography.bodySmall, color = t.ink2)
                 }
                 Column(horizontalAlignment = Alignment.End) {
-                    Text(rupees(salary.amountPaise - spent), style = AmountStyle, color = if (spent > salary.amountPaise) t.warn else t.good)
-                    Text("left from salary", style = MaterialTheme.typography.labelMedium, color = t.ink2)
-                }
-            }
-        }
-        if (salaries.size > 1) {
-            Gap(14.dp)
-            Hairline()
-            salaries.take(6).forEach { r ->
-                Row(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-                    Text(r.txn.day.format(DateTimeFormatter.ofPattern("d MMM yyyy", Locale.ENGLISH)), style = MaterialTheme.typography.bodyMedium, color = t.ink2, modifier = Modifier.weight(1f))
                     Text(rupees(r.txn.amountPaise), style = AmountStyle, color = t.ink)
+                    when {
+                        change == null || change == 0L -> Unit
+                        change > 0 -> Text("▲ ${rupees(change)}", style = DataLabel, color = t.good)
+                        else -> Text("▼ ${rupees(-change)}", style = DataLabel, color = t.warn)
+                    }
                 }
             }
         }
@@ -283,19 +267,25 @@ private fun MonthSwitcher(range: ClosedRange<java.time.LocalDate>, running: Bool
     }
 }
 
-/** A past month at a glance: total against the month before, salary and savings, pace and the biggest spends. */
+/**
+ * One month at a glance, the same six tiles for every month: spent (vs the month before), salary, what's left or
+ * saved, per day, the biggest day and the number of payments. The running month says "left"; past months "saved".
+ */
 @Composable
-private fun MonthSummary(r: com.girish.expensetracker.core.MonthReport) {
+private fun MonthSummary(r: com.girish.expensetracker.core.MonthReport, running: Boolean) {
     val t = LocalTones.current
     val diff = r.total - r.totalBefore
+    val hasSalary = r.salaryPaise > 0
     StatGrid(
-        listOfNotNull(
+        listOf(
             Stat("Spent", rupees(r.total), sub = if (r.totalBefore > 0) "vs ${rupees(r.totalBefore)} before" else null,
                 up = if (r.totalBefore > 0) diff > 0 else null, highlight = true),
-            r.savingsRate?.let { Stat("Saved", "${(it * 100).toInt()}%", sub = "of ${rupees(r.salaryPaise)} salary") }
-                ?: Stat("Payments", "${r.payments}", sub = "in ${r.days} days"),
-            Stat("Per day", rupees(r.perDay), sub = count(r.payments, "payment")),
+            Stat("Salary", if (hasSalary) rupees(r.salaryPaise) else "–", sub = r.salaryDay?.let { "credited ${it.format(dayMonth)}" } ?: "no salary SMS"),
+            if (hasSalary) Stat(if (running) "Left" else "Saved", rupees(r.salaryPaise - r.total), sub = "${((r.savingsRate ?: 0.0) * 100).toInt()}% of salary")
+            else Stat(if (running) "Left" else "Saved", "–", sub = "needs a salary"),
+            Stat("Per day", rupees(r.perDay), sub = "over ${count(r.days, "day")}"),
             r.biggestDay?.let { (d, v) -> Stat("Biggest day", rupees(v), sub = d.format(dayMonth)) } ?: Stat("Biggest day", "–"),
+            Stat("Payments", "${r.payments}", sub = "money out"),
         ),
     )
     if (r.topPlaces.isNotEmpty()) {

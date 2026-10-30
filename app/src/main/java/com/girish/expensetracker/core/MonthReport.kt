@@ -14,6 +14,8 @@ data class MonthReport(
     /** The month before, over the same number of days when this month is still running. */
     val before: Map<String, Long>,
     val salaryPaise: Long,
+    /** When the salary was credited this month (null when no salary SMS fell in it). */
+    val salaryDay: LocalDate? = null,
     val payments: Int,
     val biggestDay: Pair<LocalDate, Long>?,
     val topPlaces: List<Pair<String, Long>>,
@@ -45,6 +47,7 @@ object MonthReports {
             byCategory = Ledger.byCategoryIn(txns, range),
             before = beforeRange?.let { Ledger.byCategoryIn(txns, it) }.orEmpty(),
             salaryPaise = inMonth.filter { it.isSalary }.sumOf { it.amountPaise },
+            salaryDay = inMonth.filter { it.isSalary }.maxOfOrNull { it.day },
             payments = counted.count { Ledger.monthAmount(it) > 0 },
             biggestDay = counted.groupBy { it.day }.mapValues { (_, l) -> l.sumOf(Ledger::todayAmount) }.maxByOrNull { it.value }
                 ?.takeIf { it.value > 0 }?.toPair(),

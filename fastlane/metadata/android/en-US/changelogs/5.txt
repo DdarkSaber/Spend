@@ -1,2 +1,3 @@
-• Month: step back through past salary months with ‹ ›; each shows its pie, categories vs the month before, savings, busiest day and top places
+• Month: step back through past salary months with ‹ ›; every month shows the same tiles: spent, salary, left/saved, per day, biggest day, payments
+• Salary history moved to Trends, with raises marked
 • Trends: "Open full month" jumps to that month
