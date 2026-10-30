@@ -86,13 +86,13 @@ internal fun DaysScreen(
                 ) {
                     RoundIcon(
                         if (Masking.hidden) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
-                        if (Masking.hidden) "Show amounts" else "Hide amounts", { Masking.toggle(context) }, active = Masking.hidden, size = 38.dp,
+                        if (Masking.hidden) "Show amounts" else "Hide amounts", { Masking.toggle(context) }, active = Masking.hidden, size = 34.dp,
                     )
-                    RoundIcon(Icons.Outlined.Search, "Search payments", onSearch, size = 38.dp)
-                    RoundIcon(Icons.Filled.Add, "Add cash spend", onCash, size = 38.dp)
-                    RoundIcon(Icons.Filled.MoreHoriz, "More", onMore, size = 38.dp)
+                    RoundIcon(Icons.Outlined.Search, "Search payments", onSearch, size = 34.dp)
+                    RoundIcon(Icons.Filled.Add, "Add cash spend", onCash, size = 34.dp)
+                    RoundIcon(Icons.Filled.MoreHoriz, "More", onMore, size = 34.dp)
                 }
-                Box(Modifier.clip(CircleShape).clickable(onClick = onMore)) { Avatar(snap.owner?.displayName?.ifBlank { null } ?: "You", 44.dp) }
+                Box(Modifier.clip(CircleShape).clickable(onClick = onMore)) { Avatar(snap.owner?.displayName?.ifBlank { null } ?: "You", 38.dp) }
             }
         }
         snap.owner?.takeIf { it.state == "detected" && snap.rows.isNotEmpty() }?.let { o -> item { ReviewSetupCard(o, onReview) } }
