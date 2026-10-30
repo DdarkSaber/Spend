@@ -40,8 +40,25 @@ class MainActivity : ComponentActivity() {
 
     private val theme by lazy { mutableStateOf(getSharedPreferences("ui", MODE_PRIVATE).getString("theme", "dark") ?: "dark") }
 
+    /** A payment to open, from the quick-tag notification's "More". */
+    private val openSms = mutableStateOf<Long?>(null)
+
+    private fun takeSms(intent: Intent?) {
+        intent?.getLongExtra(com.girish.expensetracker.notify.QuickTag.EXTRA_SMS, -1L)?.takeIf { it >= 0 }?.let {
+            openSms.value = it
+            com.girish.expensetracker.notify.QuickTag.dismiss(this, it)
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        takeSms(intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Masking.load(this)
+        takeSms(intent)
         setContent {
             val dark = when (theme.value) {
                 "light" -> false
@@ -69,6 +86,8 @@ class MainActivity : ComponentActivity() {
                         theme.value = v
                         getSharedPreferences("ui", MODE_PRIVATE).edit().putString("theme", v).apply()
                     },
+                    openSms = openSms.value,
+                    onSmsOpened = { openSms.value = null },
                     lockOn = lock.enabled.value,
                     onLock = lock::setEnabled,
                 )

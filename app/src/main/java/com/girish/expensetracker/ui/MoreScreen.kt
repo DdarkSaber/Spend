@@ -1,5 +1,7 @@
 package com.girish.expensetracker.ui
 
+import androidx.compose.material.icons.outlined.EmojiEvents
+import androidx.compose.material.icons.outlined.LocalFireDepartment
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -68,6 +70,8 @@ internal class MoreActions(
     val track: (Source) -> Unit,
     val teach: (UnparsedSms) -> Unit,
     val battery: () -> Unit,
+    val streak: () -> Unit,
+    val year: () -> Unit,
 )
 
 /** Switches and their current values. */
@@ -122,6 +126,18 @@ internal fun MoreScreen(snap: Snapshot, setup: Setup, isNew: (Row) -> Boolean, o
                 Action(Icons.Outlined.Save, "Back up now", "Encrypted file, saved where you choose", actions.backup)
                 Hairline()
                 Action(Icons.Outlined.Restore, "Restore a backup", "Replaces what's in the app now", actions.restore)
+            }
+        }
+
+        item {
+            Section("Insights") {
+                Action(
+                    Icons.Outlined.LocalFireDepartment, "Low-spend streak",
+                    "${count(snap.streak.current, "day")} under ${rupees(snap.streak.limitPaise)} a day · best ${snap.streak.best}",
+                    actions.streak,
+                )
+                Hairline()
+                Action(Icons.Outlined.EmojiEvents, "Your year", "Last 12 salary months in one page, shareable", actions.year)
             }
         }
 

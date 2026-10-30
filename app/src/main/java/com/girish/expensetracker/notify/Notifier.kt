@@ -12,7 +12,7 @@ import com.girish.expensetracker.core.Alerts
 import com.girish.expensetracker.data.Repo
 import com.girish.expensetracker.data.Snapshot
 import com.girish.expensetracker.ui.MainActivity
-import com.girish.expensetracker.ui.rupees
+import com.girish.expensetracker.ui.plainRupees
 import com.girish.expensetracker.ui.sourceLabel
 import java.time.format.DateTimeFormatter
 import java.util.Locale
@@ -70,7 +70,7 @@ object Notifier {
     fun refresh(context: Context) {
         val repo = (context.applicationContext as SpendApp).repo
         val snap = repo.snapshot(days = 40)
-        val title = "Today ${rupees(snap.todayTotal)} · Month ${rupees(snap.monthTotal)}"
+        val title = "Today ${plainRupees(snap.todayTotal)} · Month ${plainRupees(snap.monthTotal)}"
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_TITLE, title).apply()
         val nm = context.getSystemService(NotificationManager::class.java)
         if (nm.areNotificationsEnabled()) nm.notify(ID, build(context, title))
@@ -88,9 +88,9 @@ object Notifier {
      * when the numbers change anyway (new SMS, midnight, app open), and each alert is posted once.
      */
     private fun postAlerts(context: Context, repo: Repo, snap: Snapshot) {
-        val alerts = Alerts.credit(snap.cards, snap.today, ::sourceLabel, ::rupees) { it.format(dayMonth) } +
-            Alerts.budgets(snap.budgets, snap.cycleStart, ::rupees) +
-            Alerts.subscriptions(snap.subscriptions, snap.today, ::rupees) +
+        val alerts = Alerts.credit(snap.cards, snap.today, ::sourceLabel, ::plainRupees) { it.format(dayMonth) } +
+            Alerts.budgets(snap.budgets, snap.cycleStart, ::plainRupees) +
+            Alerts.subscriptions(snap.subscriptions, snap.today, ::plainRupees) +
             snap.unusual.filter { !it.day.isBefore(snap.today.minusDays(2)) }.map { com.girish.expensetracker.core.Alert(it.key, it.title, it.text) }
         val sent = repo.alertsSent()
         val fresh = alerts.filter { it.key !in sent }

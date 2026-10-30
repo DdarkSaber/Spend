@@ -261,19 +261,22 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, 5) {
     }
 
     /** Returns false if this exact SMS was already stored (import and live receiver can both see it). */
-    fun insertSms(sender: String, body: String, receivedAt: Long): Boolean {
+    fun insertSms(sender: String, body: String, receivedAt: Long): Boolean = insertSmsId(sender, body, receivedAt) != null
+
+    /** The new row's id, or null when this exact SMS was already stored. */
+    fun insertSmsId(sender: String, body: String, receivedAt: Long): Long? {
         // The live receiver and the inbox import stamp the same SMS a little differently; within 10 minutes it is one message.
         val seen = readableDatabase.rawQuery(
             "SELECT 1 FROM sms WHERE sender = ? AND body = ? AND ABS(received_at - ?) < 600000 LIMIT 1",
             arrayOf(sender, body, receivedAt.toString()),
         ).use { it.moveToFirst() }
-        if (seen) return false
+        if (seen) return null
         val v = ContentValues().apply {
             put("sender", sender)
             put("body", body)
             put("received_at", receivedAt)
         }
-        return writableDatabase.insertWithOnConflict("sms", null, v, SQLiteDatabase.CONFLICT_IGNORE) != -1L
+        return writableDatabase.insertWithOnConflict("sms", null, v, SQLiteDatabase.CONFLICT_IGNORE).takeIf { it != -1L }
     }
 
     fun smsSince(sinceMillis: Long): List<RawSms> =

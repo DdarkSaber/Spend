@@ -25,9 +25,10 @@ class SmsReceiver : BroadcastReceiver() {
         val pending = goAsync()
         thread(name = "sms-ingest") {
             try {
-                var changed = false
-                for ((sender, body, at) in messages) changed = app.repo.ingest(sender, body, at) || changed
-                if (changed) Notifier.refresh(context)
+                val ids = messages.mapNotNull { (sender, body, at) -> app.repo.ingestId(sender, body, at) }
+                if (ids.isNotEmpty()) Notifier.refresh(context)
+                // A payment to a new or unsorted payee: offer a one-tap category (closes itself after 3 minutes).
+                ids.forEach { runCatching { com.girish.expensetracker.notify.QuickTag.maybePost(context, it) } }
             } finally {
                 pending.finish()
             }

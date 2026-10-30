@@ -96,6 +96,7 @@ internal fun MonthScreen(
             // The same summary for every month, salary included; the running month adds its budget and pace.
             item { MonthSummary(report, running) }
             if (running) {
+                item { ForecastPanel(snap.forecast) }
                 item { BudgetPanel(snap.budgets, onBudgets) }
                 snap.rentCandidates.forEach { c -> item { RentCard(c, onMark = { onRent(c, true) }, onDismiss = { onRent(c, false) }) } }
                 if (snap.rows.isNotEmpty()) item { PaceChart(snap) }
@@ -179,6 +180,7 @@ internal fun MonthScreen(
             item { YearPanel(snap) }
         }
         if (view == 2) {
+            if (snap.newRecurring.isNotEmpty()) item { NewRecurringPanel(snap.newRecurring) }
             item { SubscriptionsPanel(snap.subscriptions) }
             item { EmiPanel(snap.emis) }
             item { InvestmentsPanel(snap.holdings) }

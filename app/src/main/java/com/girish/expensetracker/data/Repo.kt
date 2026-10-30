@@ -8,6 +8,16 @@ import com.girish.expensetracker.core.CardStatement
 import com.girish.expensetracker.core.Classifier
 import com.girish.expensetracker.core.Credit
 import com.girish.expensetracker.core.Emi
+import com.girish.expensetracker.core.FixedCost
+import com.girish.expensetracker.core.FixedCosts
+import com.girish.expensetracker.core.Forecast
+import com.girish.expensetracker.core.Forecasts
+import com.girish.expensetracker.core.Habits
+import com.girish.expensetracker.core.HabitsReport
+import com.girish.expensetracker.core.NewRecurring
+import com.girish.expensetracker.core.NewRecurrings
+import com.girish.expensetracker.core.Streak
+import com.girish.expensetracker.core.Streaks
 import com.girish.expensetracker.core.Emis
 import com.girish.expensetracker.core.Holding
 import com.girish.expensetracker.core.Investments
@@ -89,13 +99,26 @@ data class Snapshot(
     val budgets: List<BudgetLine> by lazy { Budgets.lines(txns, cycleStart, today, plan.budgetTotal, plan.budgetByCategory) }
 
     /** Recurring charges, without loan instalments (those are listed as EMIs). */
+    /** Rent, maid, bills, SIPs: learned from the last three finished salary months. */
+    val fixedCosts: List<FixedCost> by lazy { FixedCosts.find(txns, Ledger.cycles(today, txns, 4).drop(1)) }
+
+    val forecast: Forecast by lazy { Forecasts.of(txns, cycleStart, today, fixedCosts) }
+
+    val habits: HabitsReport by lazy { Habits.of(txns, fixedCosts, today) }
+
+    val streak: Streak by lazy {
+        Streaks.of(habits.perDay, plan.streakLimit ?: Streaks.suggest(habits.perDay, today), today, habits.from)
+    }
+
+    val newRecurring: List<NewRecurring> by lazy { NewRecurrings.find(txns, today) }
+
     val subscriptions: List<Subscription> by lazy {
         val loans = emis.map { com.girish.expensetracker.core.normalizeName(it.name) }.toSet()
         Subscriptions.find(txns, today).filterNot { com.girish.expensetracker.core.normalizeName(it.name) in loans }
     }
 
     /** Double charges, unusually large payments and foreign charges from the last week. */
-    val unusual: List<Unusual> by lazy { (foreign + UnusualSpend.find(txns, today, money = { com.girish.expensetracker.ui.rupees(it) })).sortedByDescending { it.day } }
+    val unusual: List<Unusual> by lazy { (foreign + UnusualSpend.find(txns, today, money = { com.girish.expensetracker.ui.plainRupees(it) })).sortedByDescending { it.day } }
 
     val savings: List<SavingsMonth> by lazy { Savings.months(txns, Ledger.cycles(today, txns, 6)) }
 
@@ -112,7 +135,13 @@ data class Plan(
     val statementDays: Map<String, Int> = emptyMap(),
     val budgetTotal: Long? = null,
     val budgetByCategory: Map<String, Long> = emptyMap(),
+    /** Daily limit for the low-spend streak; null = suggested from the owner's own days. */
+    val streakLimit: Long? = null,
+    val groups: List<FriendGroup> = emptyList(),
 )
+
+/** A named set of people (flatmates) to split with in one tap. Labels are how each appears in bank SMS. */
+data class FriendGroup(val name: String, val members: List<Pair<String, String>>)
 
 fun sourceKey(s: Source) = "${s.bank}|${s.last4}|${s.type}"
 
@@ -134,6 +163,8 @@ private const val KEY_BUDGET_TOTAL = "budget_total"
 private const val KEY_BUDGETS = "budgets"
 private const val KEY_ALERTS_SENT = "alerts_sent"
 private const val KEY_SETTLED_LOANS = "settled_loans"
+private const val KEY_STREAK_LIMIT = "streak_limit"
+private const val KEY_GROUPS = "groups"
 
 class Repo(val store: Store) {
 
@@ -143,11 +174,14 @@ class Repo(val store: Store) {
     private val zone: ZoneId get() = ZoneId.systemDefault()
 
     /** Store an SMS if it comes from a bank transaction sender. Returns true when it was new. */
-    fun ingest(sender: String, body: String, receivedAt: Long): Boolean {
+    fun ingest(sender: String, body: String, receivedAt: Long): Boolean = ingestId(sender, body, receivedAt) != null
+
+    /** Like [ingest], returning the stored SMS's id (for the quick-tag notification). */
+    fun ingestId(sender: String, body: String, receivedAt: Long): Long? {
         return when (SmsReader.read(sender, body, profile(), store.learned())) {
-            ReadResult.NotBank, ReadResult.Promo -> false
+            ReadResult.NotBank, ReadResult.Promo -> null
             // Informational bank SMS are kept too: a future layout may turn them into transactions.
-            else -> store.insertSms(sender, body, receivedAt)
+            else -> store.insertSmsId(sender, body, receivedAt)
         }
     }
 
@@ -350,7 +384,27 @@ class Repo(val store: Store) {
         statementDays = keyed(KEY_STATEMENT_DAYS).mapValues { it.value.toInt() },
         budgetTotal = store.setting(KEY_BUDGET_TOTAL)?.toLongOrNull()?.takeIf { it > 0 },
         budgetByCategory = keyed(KEY_BUDGETS),
+        streakLimit = store.setting(KEY_STREAK_LIMIT)?.toLongOrNull()?.takeIf { it > 0 },
+        groups = groups(),
     )
+
+    /** null goes back to the suggested limit. */
+    fun setStreakLimit(paise: Long?) = store.setSetting(KEY_STREAK_LIMIT, (paise ?: 0L).toString())
+
+    // Groups are stored one per line: name|label=display;label=display
+    private fun groups(): List<FriendGroup> = lines(KEY_GROUPS).mapNotNull { l ->
+        val name = l.substringBefore('|').ifBlank { return@mapNotNull null }
+        FriendGroup(name, l.substringAfter('|').split(';').filter { '=' in it }.map { it.substringBefore('=') to it.substringAfter('=') })
+    }
+
+    private fun clean(s: String) = s.replace(Regex("[|;=\n]"), " ").trim()
+
+    fun saveGroup(g: FriendGroup, replacing: String? = null) {
+        val others = groups().filter { it.name != g.name && it.name != replacing }
+        store.setSetting(KEY_GROUPS, (others + g).joinToString("\n") { x -> clean(x.name) + "|" + x.members.joinToString(";") { "${clean(it.first)}=${clean(it.second)}" } })
+    }
+
+    fun deleteGroup(name: String) = store.setSetting(KEY_GROUPS, lines(KEY_GROUPS).filterNot { it.substringBefore('|') == name }.joinToString("\n"))
 
     /** null clears it (back to the estimate from SMS). */
     fun setCardLimit(card: Source, paise: Long?) =

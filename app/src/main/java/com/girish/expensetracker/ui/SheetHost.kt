@@ -50,7 +50,7 @@ internal fun SheetHost(ctl: AppController, snap: Snapshot, pickers: Pickers) {
         }
 
         is Sheet.Split -> SplitSheet(
-            row = sheet.row, people = people(snap),
+            row = sheet.row, people = people(snap), groups = snap.plan.groups,
             pickedContact = pickers.contactName(), onPickContact = pickers.pickContact, onContactUsed = pickers.contactUsed,
             onDismiss = close,
             onSave = { shares ->
@@ -101,6 +101,16 @@ internal fun SheetHost(ctl: AppController, snap: Snapshot, pickers: Pickers) {
         Sheet.NewTrip -> NewTripSheet(onDismiss = close) { name, start, end ->
             ctl.act { store.addTrip(name, start, end); "Added $name" }
         }
+
+        Sheet.Streak -> StreakSheet(snap.streak, custom = snap.plan.streakLimit != null, onDismiss = close) { limit ->
+            ctl.act { setStreakLimit(limit); if (limit == null) "Back to the suggested limit" else "Daily limit set to ${plainRupees(limit)}" }
+        }
+
+        is Sheet.Group -> GroupSheet(
+            sheet.group, people(snap), onDismiss = close,
+            onSave = { g -> ctl.act { saveGroup(g, replacing = sheet.group?.name); "Saved ${g.name}" } },
+            onDelete = { sheet.group?.let { g -> ctl.act { deleteGroup(g.name); "Deleted ${g.name}" } } },
+        )
 
         is Sheet.Teach -> TeachSheet(sheet.sms, onDismiss = close) { layout ->
             ctl.act { teach(layout); "Learned. SMS like this are read from now on." }

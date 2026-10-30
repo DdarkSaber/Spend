@@ -1,5 +1,8 @@
 package com.girish.expensetracker.ui
 
+import androidx.compose.material.icons.outlined.Insights
+import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material.icons.outlined.Visibility
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.animation.animateColorAsState
@@ -58,8 +61,10 @@ internal fun DaysScreen(
     onMore: () -> Unit = {},
     onReview: () -> Unit = {},
     onSearch: () -> Unit = {},
+    onHabits: () -> Unit = {},
 ) {
     val t = LocalTones.current
+    val context = androidx.compose.ui.platform.LocalContext.current
     var range by remember { mutableStateOf(0) } // 0 = 7 days, 1 = salary month, 2 = 4 months
     var month by remember { mutableStateOf(YearMonth.from(snap.today)) }
     var selected by remember { mutableStateOf(snap.today) }
@@ -79,6 +84,10 @@ internal fun DaysScreen(
                     Modifier.clip(CircleShape).border(1.dp, t.accent.copy(alpha = 0.35f), CircleShape).padding(4.dp),
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                 ) {
+                    RoundIcon(
+                        if (Masking.hidden) Icons.Outlined.VisibilityOff else Icons.Outlined.Visibility,
+                        if (Masking.hidden) "Show amounts" else "Hide amounts", { Masking.toggle(context) }, active = Masking.hidden, size = 38.dp,
+                    )
                     RoundIcon(Icons.Outlined.Search, "Search payments", onSearch, size = 38.dp)
                     RoundIcon(Icons.Filled.Add, "Add cash spend", onCash, size = 38.dp)
                     RoundIcon(Icons.Filled.MoreHoriz, "More", onMore, size = 38.dp)
@@ -132,6 +141,7 @@ internal fun DaysScreen(
         item {
             Panel {
                 PanelHeader("Calendar", chevron = true) {
+                    RoundIcon(Icons.Outlined.Insights, "Spending habits", onHabits, size = 34.dp)
                     RoundIcon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous month", { if (month > earliest) month = month.minusMonths(1) }, size = 34.dp)
                     RoundIcon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Next month", { if (month < YearMonth.from(snap.today)) month = month.plusMonths(1) }, size = 34.dp)
                 }

@@ -1,5 +1,6 @@
 package com.girish.expensetracker.ui
 
+import androidx.compose.material3.TextButton
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -101,7 +102,12 @@ private fun Face(p: Person, size: Int) {
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun PeopleScreen(snap: Snapshot, onSettle: (com.girish.expensetracker.core.Debt) -> Unit = {}, onOpen: (Person) -> Unit) {
+internal fun PeopleScreen(
+    snap: Snapshot,
+    onSettle: (com.girish.expensetracker.core.Debt) -> Unit = {},
+    onGroup: (com.girish.expensetracker.data.FriendGroup?) -> Unit = {},
+    onOpen: (Person) -> Unit,
+) {
     val t = LocalTones.current
     val all = remember(snap) { people(snap) }
     var query by remember { mutableStateOf("") }
@@ -111,9 +117,15 @@ internal fun PeopleScreen(snap: Snapshot, onSettle: (com.girish.expensetracker.c
     val gotMonth = all.sumOf { it.gotIn(cycle) }
     val recent = shown.filter { it.last >= snap.today.minusDays(30) }
     val earlier = shown - recent.toSet()
+    var view by remember { mutableStateOf(0) } // 0 people, 1 groups
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 120.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { ScreenTitle("People", "${all.size} people from your UPI payments") }
+        item { Segmented(listOf("People", "Groups"), view, { view = it }) }
+        if (view == 1) {
+            item { GroupsView(snap, all, onGroup) }
+            return@LazyColumn
+        }
         item {
             Row(
                 Modifier.fillMaxWidth().clip(CircleShape).background(t.panel).border(1.dp, t.hairline, CircleShape).padding(horizontal = 16.dp, vertical = 12.dp),
@@ -142,13 +154,17 @@ internal fun PeopleScreen(snap: Snapshot, onSettle: (com.girish.expensetracker.c
         if (all.isEmpty()) item {
             Panel { Text("No payments to people yet. UPI payments to a name appear here.", style = MaterialTheme.typography.bodyMedium, color = t.ink2) }
         }
-        if (recent.isNotEmpty()) item { PeopleGroup("Last 30 days", recent, onOpen) }
-        if (earlier.isNotEmpty()) item { PeopleGroup("Earlier", earlier, onOpen) }
+        if (recent.isNotEmpty()) item { PeopleGroup("Last 30 days", recent, snap.debts, onOpen) }
+        if (earlier.isNotEmpty()) item { PeopleGroup("Earlier", earlier, snap.debts, onOpen) }
     }
 }
 
+/** What [p] still owes the owner from splits and loans. */
+private fun owedBy(p: Person, debts: List<com.girish.expensetracker.core.Debt>) =
+    debts.filter { d -> (d.label != null && d.label in p.labels) || People.same(d.name, p.name) }.sumOf { it.leftPaise }
+
 @Composable
-private fun PeopleGroup(title: String, list: List<Person>, onOpen: (Person) -> Unit) {
+private fun PeopleGroup(title: String, list: List<Person>, debts: List<com.girish.expensetracker.core.Debt>, onOpen: (Person) -> Unit) {
     val t = LocalTones.current
     Panel(padding = PaddingValues(start = 16.dp, end = 16.dp, top = 18.dp, bottom = 6.dp)) {
         PanelHeader(title, "${list.size}")
@@ -168,9 +184,15 @@ private fun PeopleGroup(title: String, list: List<Person>, onOpen: (Person) -> U
                     )
                 }
                 Column(horizontalAlignment = Alignment.End) {
+                    val owed = owedBy(p, debts)
                     val net = p.paid - p.got
-                    Text(rupees(kotlin.math.abs(net)), style = AmountStyle, color = if (net < 0) t.good else t.ink)
-                    Text(if (net < 0) "they paid more" else "you paid", style = DataLabel, color = t.ink3)
+                    if (owed > 0) {
+                        Text(rupees(owed), style = AmountStyle, color = t.accent)
+                        Text("owes you", style = DataLabel, color = t.accent)
+                    } else {
+                        Text(rupees(kotlin.math.abs(net)), style = AmountStyle, color = if (net < 0) t.good else t.ink)
+                        Text(if (net < 0) "they paid more" else "you paid", style = DataLabel, color = t.ink3)
+                    }
                 }
             }
         }
@@ -312,6 +334,106 @@ private fun PersonMonths(snap: Snapshot, person: Person, range: Int) {
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) { Swatch(t.accent); Spacer(Modifier.width(6.dp)); Text("You paid", style = MaterialTheme.typography.labelMedium, color = t.ink2) }
             Row(verticalAlignment = Alignment.CenterVertically) { Swatch(t.ink3.copy(alpha = 0.6f)); Spacer(Modifier.width(6.dp)); Text("Paid you", style = MaterialTheme.typography.labelMedium, color = t.ink2) }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- groups
+
+/** Named sets of people (flatmates, office lunch): split with all of them in one tap, and see the group's month. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun GroupsView(snap: Snapshot, all: List<Person>, onGroup: (com.girish.expensetracker.data.FriendGroup?) -> Unit) {
+    val t = LocalTones.current
+    val groups = snap.plan.groups
+    val cycle = snap.cycleStart..snap.today
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        if (groups.isEmpty()) {
+            Panel {
+                Text("No groups yet", style = MaterialTheme.typography.titleMedium, color = t.ink)
+                Text(
+                    "Make one for the people you split with most, like flatmates. When you split a payment, pick the group and everyone is added at once.",
+                    style = MaterialTheme.typography.bodyMedium, color = t.ink2, modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+        }
+        groups.forEach { g ->
+            val members = all.filter { p -> g.members.any { (label, name) -> label in p.labels || People.same(name, p.name) } }
+            val owed = snap.debts.filter { d -> g.members.any { (label, name) -> d.label == label || People.same(d.name, name) } }.sumOf { it.leftPaise }
+            Panel {
+                PanelHeader(g.name, count(g.members.size, "person")) {
+                    TextButton(onClick = { onGroup(g) }) { Text("Edit", color = t.accent) }
+                }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    g.members.forEach { (_, name) ->
+                        Text(
+                            name, style = MaterialTheme.typography.labelMedium, color = t.ink,
+                            modifier = Modifier.clip(CircleShape).background(t.raised).padding(horizontal = 10.dp, vertical = 5.dp),
+                        )
+                    }
+                }
+                Gap(12.dp)
+                StatGrid(
+                    listOf(
+                        Stat("You paid them", rupees(members.sumOf { it.paidIn(cycle) }), sub = "this salary month"),
+                        Stat(
+                            if (owed > 0) "They owe you" else "They paid you", rupees(if (owed > 0) owed else members.sumOf { it.gotIn(cycle) }),
+                            sub = if (owed > 0) "from splits" else "this salary month", highlight = owed > 0,
+                        ),
+                    ),
+                )
+            }
+        }
+        PrimaryButton("New group", { onGroup(null) })
+    }
+}
+
+/** Create or edit a group: a name and people picked from the ones you pay. */
+@OptIn(ExperimentalLayoutApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+internal fun GroupSheet(
+    group: com.girish.expensetracker.data.FriendGroup?,
+    people: List<Person>,
+    onDismiss: () -> Unit,
+    onSave: (com.girish.expensetracker.data.FriendGroup) -> Unit,
+    onDelete: () -> Unit,
+) {
+    val t = LocalTones.current
+    var name by remember { mutableStateOf(group?.name.orEmpty()) }
+    var picked by remember { mutableStateOf(group?.members?.map { it.first }?.toSet().orEmpty()) }
+    androidx.compose.material3.ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = t.panel,
+    ) {
+        LazyColumn(contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            item { Text(if (group == null) "New group" else "Edit group", style = MaterialTheme.typography.headlineSmall, color = t.ink) }
+            item {
+                androidx.compose.material3.OutlinedTextField(
+                    name, { name = it }, label = { Text("Name, e.g. Flatmates") }, singleLine = true,
+                    colors = fieldColors(), shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            item { Text("Who is in it", style = MaterialTheme.typography.titleSmall, color = t.ink) }
+            item {
+                if (people.isEmpty()) Text("People you pay by UPI appear here.", style = MaterialTheme.typography.bodySmall, color = t.ink2)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    people.take(30).forEach { p ->
+                        val on = p.labels.first() in picked
+                        androidx.compose.material3.FilterChip(
+                            on, { picked = if (on) picked - p.labels.first() else picked + p.labels.first() },
+                            { Text(p.name) }, colors = chipColors(), border = chipBorder(on),
+                        )
+                    }
+                }
+            }
+            item {
+                PrimaryButton("Save group", {
+                    val members = people.filter { it.labels.first() in picked }.map { it.labels.first() to it.name }
+                    onSave(com.girish.expensetracker.data.FriendGroup(name.trim(), members))
+                }, enabled = name.isNotBlank() && picked.isNotEmpty())
+            }
+            if (group != null) item { TextButton(onClick = onDelete, modifier = Modifier.fillMaxWidth()) { Text("Delete group", color = t.warn) } }
         }
     }
 }

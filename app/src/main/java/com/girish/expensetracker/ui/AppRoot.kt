@@ -92,6 +92,8 @@ fun AppRoot(
     onTheme: (String) -> Unit = {},
     lockOn: Boolean = false,
     onLock: (Boolean) -> Unit = {},
+    openSms: Long? = null,
+    onSmsOpened: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val repo = (context.applicationContext as SpendApp).repo
@@ -126,6 +128,14 @@ fun AppRoot(
             row.txn.receivedAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli() > seenBefore
     }
     val openRow: (Row) -> Unit = { ctl.sheet = Sheet.Payment(it) }
+    // "More" on the quick-tag notification: open that payment's sheet once the ledger is loaded.
+    LaunchedEffect(openSms, snap) {
+        val id = openSms ?: return@LaunchedEffect
+        val row = snap?.rows?.firstOrNull { it.smsId == id } ?: return@LaunchedEffect
+        ctl.page = null
+        ctl.sheet = Sheet.Payment(row)
+        onSmsOpened()
+    }
 
     androidx.activity.compose.BackHandler(enabled = ctl.page != null) { ctl.page = null }
     androidx.activity.compose.BackHandler(enabled = ctl.page == null && tab != Tab.DAYS) { tab = Tab.DAYS }
@@ -147,6 +157,7 @@ fun AppRoot(
                         s, isNew, onRow = openRow,
                         onCash = { ctl.sheet = Sheet.Cash }, onMore = { tab = Tab.MORE }, onReview = { ctl.sheet = Sheet.Owner },
                         onSearch = { ctl.page = Page.Search },
+                        onHabits = { ctl.page = Page.Habits },
                         onLoadDemo = if (BuildConfig.DEBUG) ({ ctl.act { "Loaded ${loadDemo()} demo bank SMS (debug build only)" } }) else null,
                     )
                     Tab.MONTH -> MonthScreen(
@@ -160,7 +171,11 @@ fun AppRoot(
                         onRow = openRow,
                     )
                     Tab.CARDS -> CardsScreen(s, isNew, onCardSettings = { ctl.sheet = Sheet.CardSettings(it) }, onRow = openRow)
-                    Tab.PEOPLE -> PeopleScreen(s, onSettle = { d -> ctl.act { settleDebt(d, s.rows); "${d.name} is settled" } }) { ctl.page = Page.Person(it.key) }
+                    Tab.PEOPLE -> PeopleScreen(
+                        s,
+                        onSettle = { d -> ctl.act { settleDebt(d, s.rows); "${d.name} is settled" } },
+                        onGroup = { ctl.sheet = Sheet.Group(it) },
+                    ) { ctl.page = Page.Person(it.key) }
                     Tab.MORE -> MoreScreen(
                         snap = s, setup = setup, isNew = isNew, onRow = openRow,
                         actions = moreActions(ctl, s, pickers, onOpenBatterySettings),
@@ -187,6 +202,11 @@ fun AppRoot(
 private fun PageHost(ctl: AppController, s: Snapshot, isNew: (Row) -> Boolean, openRow: (Row) -> Unit) {
     when (val p = ctl.page) {
         Page.Search -> SearchScreen(s, isNew, onBack = { ctl.page = null }, onRow = openRow)
+        Page.Habits -> HabitsScreen(s, onBack = { ctl.page = null })
+        Page.Year -> {
+            val tones = LocalTones.current
+            YearScreen(s, onBack = { ctl.page = null }, onShare = { runCatching { shareYear(ctl.context, s, tones) }.onFailure { ctl.say("Couldn't share: ${it.message}") } })
+        }
         Page.Trips -> TripsScreen(
             s, isNew, onBack = { ctl.page = null }, onNew = { ctl.sheet = Sheet.NewTrip },
             onDelete = { trip -> ctl.act { store.deleteTrip(trip.id); "Deleted ${trip.name}" } }, onRow = openRow,
@@ -229,4 +249,6 @@ private fun moreActions(ctl: AppController, s: Snapshot, pickers: Pickers, onBat
     track = { src -> ctl.act { store.track(src); "Now tracking ${sourceLabel(src)}" } },
     teach = { sms -> ctl.sheet = Sheet.Teach(sms) },
     battery = onBattery,
+    streak = { ctl.sheet = Sheet.Streak },
+    year = { ctl.page = Page.Year },
 )

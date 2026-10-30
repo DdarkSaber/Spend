@@ -2,6 +2,8 @@ package com.girish.expensetracker.ui
 
 import com.girish.expensetracker.core.Source
 import com.girish.expensetracker.core.SourceType
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import kotlin.math.abs
 import kotlin.math.roundToLong
 
@@ -20,21 +22,50 @@ fun indianGroup(n: Long): String {
     return parts.joinToString(",") + "," + last3
 }
 
-/** Whole rupees, e.g. "₹1,420" or "−₹300". */
-fun rupees(paise: Long): String {
+/**
+ * The eye button on Home: while on, every amount drawn in the app reads "₹ ••••". It's Compose state, so flipping
+ * it redraws every screen. Notifications, the widget and exports use the [plain] forms and are never hidden.
+ */
+object Masking {
+    var hidden by androidx.compose.runtime.mutableStateOf(false)
+    private const val MASK = "₹ ••••"
+
+    fun rupees(paise: Long) = if (hidden) MASK else plainRupees(paise)
+
+    /** Remembered between launches. */
+    fun load(context: android.content.Context) { hidden = context.getSharedPreferences("ui", 0).getBoolean("hide_amounts", false) }
+
+    fun toggle(context: android.content.Context) {
+        hidden = !hidden
+        context.getSharedPreferences("ui", 0).edit().putBoolean("hide_amounts", hidden).apply()
+    }
+    fun exact(paise: Long) = if (hidden) MASK else plainRupeesExact(paise)
+    fun compact(paise: Long) = if (hidden) "•••" else plainCompact(paise)
+}
+
+/** Whole rupees, e.g. "₹1,420" or "−₹300" (hidden while [Masking] is on). */
+fun rupees(paise: Long): String = Masking.rupees(paise)
+
+/** Rupees with paise, e.g. "₹135.34" (hidden while [Masking] is on). */
+fun rupeesExact(paise: Long): String = Masking.exact(paise)
+
+/** Short form for calendar cells (hidden while [Masking] is on). */
+fun compact(paise: Long): String = Masking.compact(paise)
+
+/** Never hidden: for the notification, widget, alerts and files. */
+fun plainRupees(paise: Long): String {
     val r = (paise / 100.0).roundToLong()
     return (if (r < 0) "−" else "") + "₹" + indianGroup(r)
 }
 
-/** Rupees with paise, e.g. "₹135.34". */
-fun rupeesExact(paise: Long): String {
+fun plainRupeesExact(paise: Long): String {
     val sign = if (paise < 0) "−" else ""
     val p = abs(paise)
     return "$sign₹${indianGroup(p / 100)}.${(p % 100).toString().padStart(2, '0')}"
 }
 
-/** Short form for calendar cells: 950, 1.2k, 15k, 1.1L. */
-fun compact(paise: Long): String {
+/** 950, 1.2k, 15k, 1.1L. */
+fun plainCompact(paise: Long): String {
     val r = abs(paise) / 100.0
     val s = when {
         r < 1000 -> r.roundToLong().toString()

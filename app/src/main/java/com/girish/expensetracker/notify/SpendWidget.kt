@@ -9,7 +9,7 @@ import android.content.Intent
 import android.widget.RemoteViews
 import com.girish.expensetracker.R
 import com.girish.expensetracker.ui.MainActivity
-import com.girish.expensetracker.ui.rupees
+import com.girish.expensetracker.ui.plainRupees
 import kotlin.concurrent.thread
 
 /**
@@ -38,8 +38,8 @@ class SpendWidget : AppWidgetProvider() {
         private const val KEY_MONTH = "month"
 
         fun update(context: Context, todayPaise: Long, monthPaise: Long) {
-            val today = rupees(todayPaise)
-            val month = rupees(monthPaise)
+            val today = plainRupees(todayPaise)
+            val month = plainRupees(monthPaise)
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString(KEY_TODAY, today).putString(KEY_MONTH, month).apply()
             val manager = AppWidgetManager.getInstance(context)
             val ids = manager.getAppWidgetIds(ComponentName(context, SpendWidget::class.java))

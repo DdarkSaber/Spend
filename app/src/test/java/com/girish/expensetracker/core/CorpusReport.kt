@@ -48,6 +48,7 @@ class CorpusReport {
         println("SUBSCRIPTIONS ${Subscriptions.find(all, today).map { "${it.name} ${it.lastPaise / 100}" }}")
         println("UNUSUAL ${UnusualSpend.find(all, today, money = { "${it / 100}" }, days = 120).map { it.title }}")
         println("FOREIGN ${raw.mapNotNull { (s, b, ts) -> SmsReader.bankOf(s)?.let { UnusualSpend.foreignCharge(it, b, LocalDateTime.ofInstant(Instant.ofEpochMilli(ts.toLong()), ZoneId.of("Asia/Kolkata"))) } }.map { it.title }}")
+        println("FIXED ${FixedCosts.find(all, Ledger.cycles(today, all, 4).drop(1)).map { "${it.category}:${it.typicalPaise / 100}@${it.usualDay}" }}")
         println("INVESTMENTS ${Investments.holdings(all, today.minusDays(30)).map { "${it.platform} ${it.totalPaise / 100}" }}")
         // Every bank-sender SMS that mentions a loan or EMI, and what the reader made of it.
         raw.filter { (s, b, _) -> SmsReader.bankOf(s) != null && Regex("(?i)\\b(emi|loan)\\b").containsMatchIn(b) }

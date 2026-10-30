@@ -13,7 +13,7 @@ import com.girish.expensetracker.SpendApp
 import com.girish.expensetracker.core.Ledger
 import com.girish.expensetracker.ui.MainActivity
 import com.girish.expensetracker.ui.count
-import com.girish.expensetracker.ui.rupees
+import com.girish.expensetracker.ui.plainRupees
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -71,9 +71,9 @@ object Digest {
         val snap = (context.applicationContext as SpendApp).repo.snapshot(days = 40)
         val today = snap.rows.filter { it.txn.day == snap.today && Ledger.todayAmount(it.txn) > 0 }
         val top = today.groupBy { it.txn.category }.mapValues { (_, r) -> r.sumOf { Ledger.todayAmount(it.txn) } }.maxByOrNull { it.value }
-        val title = if (today.isEmpty()) "No spending today" else "Today ${rupees(snap.todayTotal)} · ${count(today.size, "payment")}"
+        val title = if (today.isEmpty()) "No spending today" else "Today ${plainRupees(snap.todayTotal)} · ${count(today.size, "payment")}"
         val budget = snap.budgets.firstOrNull { it.category == null }?.let { " · ${(it.share * 100).toInt()}% of budget" }.orEmpty()
-        val text = listOfNotNull(top?.let { "Most on ${it.key} ${rupees(it.value)}" }, "Month ${rupees(snap.monthTotal)}$budget").joinToString(" · ")
+        val text = listOfNotNull(top?.let { "Most on ${it.key} ${plainRupees(it.value)}" }, "Month ${plainRupees(snap.monthTotal)}$budget").joinToString(" · ")
 
         val nm = context.getSystemService(NotificationManager::class.java)
         if (nm.getNotificationChannel(CHANNEL) == null) {

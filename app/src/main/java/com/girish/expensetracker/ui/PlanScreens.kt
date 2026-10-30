@@ -404,6 +404,7 @@ internal fun SplitSheet(
     onContactUsed: () -> Unit,
     onDismiss: () -> Unit,
     onSave: (List<SplitShare>) -> Unit,
+    groups: List<com.girish.expensetracker.data.FriendGroup> = emptyList(),
 ) {
     val t = LocalTones.current
     val total = row.txn.amountPaise
@@ -455,6 +456,22 @@ internal fun SplitSheet(
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     SecondaryButton("+ Person", { drafts.add(Draft("", null, "")) })
                     SecondaryButton("From contacts", onPickContact)
+                }
+            }
+            if (groups.isNotEmpty()) item {
+                Text("Groups", style = MaterialTheme.typography.labelMedium, color = t.ink2)
+                Gap(6.dp)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    groups.forEach { g ->
+                        val all = g.members.all { (label, _) -> drafts.any { it.label == label } }
+                        FilterChip(all, {
+                            // Everyone in the group who isn't on the split yet; empty name rows are filled first.
+                            g.members.filter { (label, _) -> drafts.none { it.label == label } }.forEach { (label, name) ->
+                                val empty = drafts.firstOrNull { it.name.isBlank() }
+                                if (empty != null) { empty.name = name; empty.label = label } else drafts.add(Draft(name, label, ""))
+                            }
+                        }, { Text("${g.name} · ${g.members.size}") }, colors = chipColors(), border = chipBorder(all))
+                    }
                 }
             }
             if (people.isNotEmpty()) item {

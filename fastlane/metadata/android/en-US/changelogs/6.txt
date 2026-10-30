@@ -1,0 +1,8 @@
+• Month: browse past months; same tiles every month incl. salary; salary history in Trends
+• Month-end forecast: fixed costs (rent, SIPs, bills) still to come + everyday pace
+• Quick tag: sort a new payment from its notification (closes itself after 3 min)
+• Eye button on Home hides all amounts
+• Habits page (from Home calendar): heatmap, weekdays vs weekends, time of day
+• People: Groups for one-tap splits; who owes you on each person
+• More: low-spend streak and Your year (shareable image)
+• Recurring: new autopays and possible free trials

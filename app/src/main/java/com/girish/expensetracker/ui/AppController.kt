@@ -29,12 +29,16 @@ internal sealed interface Sheet {
     data object NewTrip : Sheet
     data object AutoBackup : Sheet
     data class Teach(val sms: UnparsedSms) : Sheet
+    data object Streak : Sheet
+    data class Group(val group: com.girish.expensetracker.data.FriendGroup?) : Sheet
 }
 
 /** Full-screen pages that sit above the tabs (back returns to the tab). */
 internal sealed interface Page {
     data object Search : Page
     data object Trips : Page
+    data object Habits : Page
+    data object Year : Page
     data class Person(val key: String) : Page
 }
 

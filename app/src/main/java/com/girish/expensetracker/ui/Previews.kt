@@ -60,7 +60,7 @@ fun MorePreview() = Shell(Tab.MORE) {
     val none = {}
     MoreScreen(
         demo, Setup(sms = true, notifications = true, batteryUnrestricted = false), demoIsNew, {},
-        MoreActions(none, none, none, none, none, none, none, none, none, none, {}, {}, none),
+        MoreActions(none, none, none, none, none, none, none, none, none, none, {}, {}, none, none, none),
         MoreSettings("dark", {}, false, {}, false, {}, com.girish.expensetracker.data.AutoBackup.State(false, 0L, null)),
     )
 }
