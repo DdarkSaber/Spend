@@ -1,0 +1,2 @@
+• Month: step back through past salary months with ‹ ›; each shows its pie, categories vs the month before, savings, busiest day and top places
+• Trends: "Open full month" jumps to that month

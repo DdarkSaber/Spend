@@ -1,5 +1,10 @@
 package com.girish.expensetracker.ui
 
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.border
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import com.girish.expensetracker.core.MonthReports
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.animation.AnimatedVisibility
@@ -59,24 +64,43 @@ internal fun MonthScreen(
     var view by remember { mutableStateOf(0) } // 0 overview, 1 trends, 2 recurring
     var selected by remember { mutableStateOf<String?>(null) }
     var openCat by remember { mutableStateOf<String?>(null) }
-    val byCat = remember(snap) { Ledger.byCategory(snap.txns, snap.today) }
-    val lastSoFar = remember(snap) { lastMonthSoFar(snap) }
-    val shown = byCat.filterKeys { withInvestments || it != "Investment" }
+
+    // Salary months, newest first, back to the first one with any payment. 0 is the running month.
+    val months = remember(snap) {
+        val first = snap.txns.minOfOrNull { it.day }
+        Ledger.cycles(snap.today, snap.txns, 12).filter { first == null || it.endInclusive >= first }.ifEmpty { listOf(snap.cycleStart..snap.today) }
+    }
+    var monthIndex by remember(snap) { mutableStateOf(0) }
+    val range = months[monthIndex.coerceIn(0, months.lastIndex)]
+    val report = remember(snap, range) { MonthReports.of(snap.txns, range, months.getOrNull(monthIndex + 1), running = monthIndex == 0) }
+    fun showMonth(i: Int) { monthIndex = i.coerceIn(0, months.lastIndex); selected = null; openCat = null }
+
+    val shown = report.byCategory.filterKeys { withInvestments || it != "Investment" }
     val slices = shown.filterValues { it > 0 }.toList().sortedByDescending { it.second }
     val gross = slices.sumOf { it.second }
     val negatives = shown.filterValues { it < 0 }
     val total = shown.values.sum()
     val ring = topWithOther(slices)
     val inOther = slices.map { it.first }.toSet() - ring.map { it.first }.toSet()
+    val running = monthIndex == 0
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = screenPadding, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    // Switching view (including "Open full month" from Trends) starts at the top, not wherever the last view was.
+    val list = androidx.compose.foundation.lazy.rememberLazyListState()
+    androidx.compose.runtime.LaunchedEffect(view) { list.scrollToItem(0) }
+
+    LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = screenPadding, verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { ScreenTitle("Month", "Salary month since ${snap.cycleStart.format(dayMonth)}") }
         item { Segmented(listOf("Overview", "Trends", "Recurring"), view, { view = it }) }
         if (view == 0) {
-            item { SalaryCard(snap) }
-            item { BudgetPanel(snap.budgets, onBudgets) }
-            snap.rentCandidates.forEach { c -> item { RentCard(c, onMark = { onRent(c, true) }, onDismiss = { onRent(c, false) }) } }
-            if (snap.rows.isNotEmpty()) item { PaceChart(snap) }
+            item { MonthSwitcher(range, running, canBack = monthIndex < months.lastIndex, onBack = { showMonth(monthIndex + 1) }, onNext = { showMonth(monthIndex - 1) }) }
+            if (running) {
+                item { SalaryCard(snap) }
+                item { BudgetPanel(snap.budgets, onBudgets) }
+                snap.rentCandidates.forEach { c -> item { RentCard(c, onMark = { onRent(c, true) }, onDismiss = { onRent(c, false) }) } }
+                if (snap.rows.isNotEmpty()) item { PaceChart(snap) }
+            } else {
+                item { MonthSummary(report) }
+            }
             item {
                 Panel {
                     PanelHeader("Categories", chevron = true) {
@@ -88,7 +112,7 @@ internal fun MonthScreen(
                     RollingAmount(total, MaterialTheme.typography.displaySmall.copy(fontWeight = androidx.compose.ui.text.font.FontWeight(700), fontFeatureSettings = "tnum"), t.ink)
                     Text(if (withInvestments) "including investments" else "excluding investments", style = MaterialTheme.typography.bodySmall, color = t.ink2)
                     DonutChart(ring, total, selected) { selected = it }
-                    if (slices.isEmpty()) Text("Nothing spent yet this salary month.", style = MaterialTheme.typography.bodyMedium, color = t.ink2)
+                    if (slices.isEmpty()) Text(if (running) "Nothing spent yet this salary month." else "Nothing spent in this month.", style = MaterialTheme.typography.bodyMedium, color = t.ink2)
                     slices.forEachIndexed { k, (cat, amt) ->
                         if (k > 0) Hairline()
                         val ringKey = if (cat in inOther) "Other" else cat
@@ -108,7 +132,7 @@ internal fun MonthScreen(
                                     )
                                 }
                                 Spacer(Modifier.width(12.dp))
-                                val before = lastSoFar[cat] ?: 0L
+                                val before = report.before[cat] ?: 0L
                                 val diff = amt - before
                                 Text(
                                     when {
@@ -127,9 +151,9 @@ internal fun MonthScreen(
                             }
                             AnimatedVisibility(openCat == cat, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
                                 Column(Modifier.padding(top = 6.dp)) {
-                                    snap.rows.filter { it.txn.category == cat && it.txn.day >= snap.cycleStart && Ledger.monthAmount(it.txn) != 0L }
+                                    snap.rows.filter { it.txn.category == cat && it.txn.day in range && Ledger.monthAmount(it.txn) != 0L }
                                         .sortedByDescending { it.txn.receivedAt }
-                                        .forEach { TxnRow(it, isNew(it), onRow) }
+                                        .forEach { TxnRow(it, isNew(it), onRow, showDate = true) }
                                 }
                             }
                         }
@@ -149,7 +173,8 @@ internal fun MonthScreen(
             }
         }
         if (view == 1) {
-            item { MonthsBars(snap, withInvestments, isNew, onRow) }
+            // Trends bars are oldest-left; "open" jumps Overview to that month.
+            item { MonthsBars(snap, withInvestments, isNew, onRow, onOpenMonth = { start -> months.indexOfFirst { it.start == start }.takeIf { it >= 0 }?.let { showMonth(it); view = 0 } }) }
             item { SavingsPanel(snap.savings) }
             item { YearPanel(snap) }
         }
@@ -234,6 +259,57 @@ private fun RentCard(c: com.girish.expensetracker.core.RentCandidate, onMark: ()
                 colors = ButtonDefaults.buttonColors(containerColor = t.accent, contentColor = Color(0xFF04211C)),
             ) { Text("Mark as rent", style = MaterialTheme.typography.labelLarge) }
             SecondaryButton("Not rent", onDismiss)
+        }
+    }
+}
+
+/** ‹ Sep 2026 · 28 Aug – 27 Sep ›: steps through salary months; the running month is the default. */
+@Composable
+private fun MonthSwitcher(range: ClosedRange<java.time.LocalDate>, running: Boolean, canBack: Boolean, onBack: () -> Unit, onNext: () -> Unit) {
+    val t = LocalTones.current
+    Row(
+        Modifier.fillMaxWidth().clip(CircleShape).background(t.panel).border(1.dp, t.hairline, CircleShape).padding(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RoundIcon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Earlier month", { if (canBack) onBack() }, size = 38.dp)
+        Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                (if (running) "This month · " else "") + cycleMonth(range.start) + " " + range.endInclusive.year,
+                style = MaterialTheme.typography.titleSmall, color = if (running) t.ink else t.accent,
+            )
+            Text("${range.start.format(dayMonth)} – ${range.endInclusive.format(dayMonth)}", style = DataLabel, color = t.ink3)
+        }
+        RoundIcon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Later month", { if (!running) onNext() }, size = 38.dp)
+    }
+}
+
+/** A past month at a glance: total against the month before, salary and savings, pace and the biggest spends. */
+@Composable
+private fun MonthSummary(r: com.girish.expensetracker.core.MonthReport) {
+    val t = LocalTones.current
+    val diff = r.total - r.totalBefore
+    StatGrid(
+        listOfNotNull(
+            Stat("Spent", rupees(r.total), sub = if (r.totalBefore > 0) "vs ${rupees(r.totalBefore)} before" else null,
+                up = if (r.totalBefore > 0) diff > 0 else null, highlight = true),
+            r.savingsRate?.let { Stat("Saved", "${(it * 100).toInt()}%", sub = "of ${rupees(r.salaryPaise)} salary") }
+                ?: Stat("Payments", "${r.payments}", sub = "in ${r.days} days"),
+            Stat("Per day", rupees(r.perDay), sub = count(r.payments, "payment")),
+            r.biggestDay?.let { (d, v) -> Stat("Biggest day", rupees(v), sub = d.format(dayMonth)) } ?: Stat("Biggest day", "–"),
+        ),
+    )
+    if (r.topPlaces.isNotEmpty()) {
+        Gap(4.dp)
+        Panel(padding = PaddingValues(start = 18.dp, end = 18.dp, top = 18.dp, bottom = 10.dp)) {
+            PanelHeader("Where it went most")
+            r.topPlaces.forEachIndexed { k, (name, amt) ->
+                if (k > 0) Hairline()
+                Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("${k + 1}", style = DataLabel, color = t.ink3, modifier = Modifier.width(22.dp))
+                    Text(name, style = MaterialTheme.typography.bodyMedium, color = t.ink, modifier = Modifier.weight(1f), maxLines = 1)
+                    Text(rupees(amt), style = AmountStyle, color = t.ink)
+                }
+            }
         }
     }
 }

@@ -1,5 +1,6 @@
 package com.girish.expensetracker.ui
 
+import androidx.compose.material3.TextButton
 import com.girish.expensetracker.data.Row
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
@@ -259,7 +260,7 @@ fun DonutChart(slices: List<Pair<String, Long>>, total: Long, selected: String?,
 /** One stacked bar per salary month (newest on the right), split by the biggest categories plus Other. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun MonthsBars(snap: Snapshot, withInvestments: Boolean, isNew: (Row) -> Boolean = { false }, onRow: (Row) -> Unit = {}) {
+fun MonthsBars(snap: Snapshot, withInvestments: Boolean, isNew: (Row) -> Boolean = { false }, onRow: (Row) -> Unit = {}, onOpenMonth: (java.time.LocalDate) -> Unit = {}) {
     val t = LocalTones.current
     val cycles = remember(snap) { Ledger.cycles(snap.today, snap.txns, 4).reversed() }
     val perCycle = remember(snap, withInvestments) {
@@ -338,6 +339,7 @@ fun MonthsBars(snap: Snapshot, withInvestments: Boolean, isNew: (Row) -> Boolean
             Gap(14.dp)
             Hairline()
             MonthDetail(snap, cycles[open], withInvestments, isNew, onRow)
+            TextButton(onClick = { onOpenMonth(cycles[open].start) }) { Text("Open full month ›", color = t.accent) }
         }
     }
 }
