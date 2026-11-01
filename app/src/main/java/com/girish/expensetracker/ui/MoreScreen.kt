@@ -72,6 +72,8 @@ internal class MoreActions(
     val battery: () -> Unit,
     val streak: () -> Unit,
     val year: () -> Unit,
+    val editCardGroup: (com.girish.expensetracker.core.CardHealth) -> Unit = {},
+    val askCardGroupsAgain: (String) -> Unit = {},
 )
 
 /** Switches and their current values. */
@@ -88,8 +90,9 @@ internal class MoreSettings(
 @Composable
 internal fun MoreScreen(snap: Snapshot, setup: Setup, isNew: (Row) -> Boolean, onRow: (Row) -> Unit, actions: MoreActions, settings: MoreSettings) {
     val t = LocalTones.current
-    val unsorted = snap.rows.filter { it.txn.kind == Kind.SPEND && it.txn.category == "Uncategorised" }.sortedByDescending { it.txn.receivedAt }
-    val moneyIn = snap.rows.filter { it.txn.kind == Kind.INCOME }.sortedByDescending { it.txn.receivedAt }
+    val unsorted = androidx.compose.runtime.remember(snap) { snap.rows.filter { it.txn.kind == Kind.SPEND && it.txn.category == "Uncategorised" }.sortedByDescending { it.txn.receivedAt } }
+    val moneyIn = androidx.compose.runtime.remember(snap) { snap.rows.filter { it.txn.kind == Kind.INCOME }.sortedByDescending { it.txn.receivedAt } }
+    val groups = snap.cards.filter { it.isGroup }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = screenPadding, verticalArrangement = Arrangement.spacedBy(14.dp)) {
         item { ScreenTitle("More") }
@@ -165,6 +168,30 @@ internal fun MoreScreen(snap: Snapshot, setup: Setup, isNew: (Row) -> Boolean, o
             Panel {
                 PanelHeader("Appearance")
                 ThemePicker(settings.theme, settings.onTheme)
+            }
+        }
+
+        // Card groups: change or split a group, or turn a "no" to grouping back on.
+        if (groups.isNotEmpty() || snap.cardGroupsOff.isNotEmpty()) item(key = "card-groups") {
+            Panel(padding = PaddingValues(start = 18.dp, end = 18.dp, top = 18.dp, bottom = 8.dp)) {
+                PanelHeader("Card groups", "${groups.size}")
+                groups.forEachIndexed { k, h ->
+                    if (k > 0) Hairline()
+                    ListRow(
+                        h.title ?: sourceLabel(h.card),
+                        h.members.joinToString(" · ") { it.card.last4 } + if (h.sharedLimit) " · one shared limit" else " · own limits",
+                        leading = { BankMark(h.card, 36.dp) },
+                        trailing = { Text("Edit", color = t.accent) },
+                        onClick = { actions.editCardGroup(h) },
+                    )
+                }
+                snap.cardGroupsOff.forEachIndexed { k, bank ->
+                    if (k > 0 || groups.isNotEmpty()) Hairline()
+                    ListRow(
+                        "$bank cards", "You said they're not on one statement",
+                        trailing = { TextButton(onClick = { actions.askCardGroupsAgain(bank) }) { Text("Ask again", color = t.accent) } },
+                    )
+                }
             }
         }
 

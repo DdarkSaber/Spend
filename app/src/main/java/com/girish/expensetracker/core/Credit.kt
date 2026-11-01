@@ -88,7 +88,17 @@ data class CardHealth(
     val nextStatement: LocalDate?,
     /** Card bill payments since the latest statement. */
     val paidSinceStatementPaise: Long,
+    /** For a group of cards that share one statement: each card with its part of the balance. Empty for a single card. */
+    val members: List<CardHealth> = emptyList(),
+    /** For a group: false when each card has its own limit and the group's limit is their sum. */
+    val sharedLimit: Boolean = true,
+    /** The group's name ("ICICI cards", or one the owner chose); null for a single card. */
+    val title: String? = null,
+    /** The owner said this statement is paid (no payment SMS came). */
+    val markedPaid: Boolean = false,
 ) {
+    val isGroup: Boolean get() = members.isNotEmpty()
+
     val utilization: Double? get() = limitPaise?.takeIf { it > 0 }?.let { outstandingPaise.toDouble() / it }
 
     /** Pay this much before [nextStatement] to report at or under [share] of the limit. */
@@ -99,6 +109,34 @@ data class CardHealth(
 
     val minLeftPaise: Long? get() = statement?.minDuePaise?.let { max(0L, it - paidSinceStatementPaise) }
 }
+
+/**
+ * Cards of one bank that share a statement (and usually one limit), shown together. A bank can have more than one
+ * group (two pairs of cards with different limits). [id] is the group's stand-in "last digits", so its limit and
+ * statement day are kept like a card's.
+ */
+data class CardGroup(
+    val bank: String,
+    val cards: List<Source>,
+    val sharedLimit: Boolean = true,
+    val id: String = DIGITS,
+    val name: String? = null,
+) {
+    val anchor: Source get() = Source(bank, id, SourceType.CARD)
+
+    companion object {
+        /** The id of a bank's first group (and of every group saved before a bank could have several). */
+        const val DIGITS = "group"
+
+        fun isGroup(s: Source) = s.type == SourceType.CARD && s.last4.startsWith(DIGITS)
+    }
+}
+
+/** "I paid this statement": set by the owner when no payment SMS came. */
+data class MarkedPaid(val statementDate: LocalDate, val amountPaise: Long, val at: LocalDateTime)
+
+/** The "last digits" of a card SMS that printed no card number. */
+const val UNASSIGNED = "?"
 
 object Credit {
 
@@ -121,35 +159,151 @@ object Credit {
         ownerLimitPaise: Long?,
         ownerStatementDay: Int?,
         today: LocalDate,
+        marked: MarkedPaid? = null,
+        /** Bank-account payments to this bank can only be for this card (the owner's only card there). */
+        accountPaysHere: Boolean = false,
+    ): CardHealth = measure(card, listOf(card), txns, statements, limits, ownerLimitPaise, ownerStatementDay, today, marked = marked, accountPaysHere = accountPaysHere)
+
+    /**
+     * Cards of one bank that share a statement (an add-on card, or two cards on one account). With [CardGroup.sharedLimit]
+     * the bank's "available limit" SMS already speak for the whole group, so the group is measured as one card and each
+     * card gets a part of the balance in proportion to what it spent lately. Without it, each card is measured on its own
+     * and the group adds them up.
+     */
+    fun groupHealth(
+        group: CardGroup,
+        txns: List<Txn>,
+        statements: List<CardStatement>,
+        limits: List<LimitSeen>,
+        /** Owner-set limit and statement day for the group, and per-card limits (used when the limit is not shared). */
+        ownerLimitPaise: Long?,
+        ownerStatementDay: Int?,
+        cardLimits: Map<Source, Long>,
+        today: LocalDate,
+        /** Card SMS of this bank without a card number count here: the group holds all the owner's cards at the bank. */
+        unassigned: Boolean = false,
+        title: String? = null,
+        marked: MarkedPaid? = null,
     ): CardHealth {
-        val mine = txns.filter { it.parsed.source.matches(card.bank, card.last4) }
-        val seen = limits.filter { card.matches(it.bank, it.digits) }
-        val stmt = statements.filter { card.matches(it.bank, it.digits) }.maxByOrNull { it.statementDate }
+        // The group holds every card of the bank ([unassigned]): bank-account payments to that bank are its own.
+        val whole = measure(group.anchor, group.cards, txns, statements, limits, ownerLimitPaise.takeIf { group.sharedLimit }, ownerStatementDay, today, unassigned, marked, accountPaysHere = unassigned)
+            .copy(title = title)
+        if (!group.sharedLimit) {
+            val each = group.cards.map { measure(it, listOf(it), txns, statements, limits, cardLimits[it], ownerStatementDay, today) }
+            val limit = if (each.all { it.limitPaise != null }) each.sumOf { it.limitPaise!! } else null
+            return whole.copy(
+                limitPaise = limit,
+                limitEstimated = each.any { it.limitEstimated },
+                // Each card is measured on its own; a "mark paid" on the group's statement comes off the total.
+                outstandingPaise = (each.sumOf { it.outstandingPaise } - if (whole.markedPaid)
+                    measure(group.anchor, group.cards, txns, statements, limits, null, ownerStatementDay, today, unassigned, null, unassigned).outstandingPaise -
+                        measure(group.anchor, group.cards, txns, statements, limits, null, ownerStatementDay, today, unassigned, marked, unassigned).outstandingPaise
+                else 0L).coerceAtLeast(0L),
+                members = each.map { it.copy(statement = whole.statement, nextStatement = whole.nextStatement, paidSinceStatementPaise = 0) },
+                sharedLimit = false,
+            )
+        }
+        // Spend over the last 60 days (this cycle and the last one) decides who owes which part of the shared balance.
+        val since = today.minusDays(60)
+        val spent = group.cards.map { c ->
+            txns.filter { it.parsed.source.matches(c.bank, c.last4) && it.parsed.direction == Direction.DEBIT && it.day > since }.sumOf { it.amountPaise }
+        }
+        val total = spent.sum()
+        val parts = LongArray(group.cards.size) { i ->
+            if (total == 0L) whole.outstandingPaise / group.cards.size else (whole.outstandingPaise.toDouble() * spent[i] / total).toLong()
+        }
+        // Rounding leftovers go to the card that spent most, so the parts add up to the group's balance exactly.
+        if (parts.isNotEmpty()) parts[spent.indices.maxBy { spent[it] }] += whole.outstandingPaise - parts.sum()
+        val members = group.cards.mapIndexed { i, c ->
+            CardHealth(c, whole.limitPaise, whole.limitEstimated, parts[i], whole.statement, whole.nextStatement, 0)
+        }
+        return whole.copy(members = members)
+    }
+
+    private fun measure(
+        card: Source,
+        cards: List<Source>,
+        txns: List<Txn>,
+        statements: List<CardStatement>,
+        limits: List<LimitSeen>,
+        ownerLimitPaise: Long?,
+        ownerStatementDay: Int?,
+        today: LocalDate,
+        unassigned: Boolean = false,
+        marked: MarkedPaid? = null,
+        accountPaysHere: Boolean = false,
+    ): CardHealth {
+        val bank = card.bank
+        val mine = txns.filter { t ->
+            cards.any { t.parsed.source.matches(it.bank, it.last4) } ||
+                (unassigned && t.parsed.source.type == SourceType.CARD && t.parsed.source.bank == bank && t.parsed.source.last4 == UNASSIGNED)
+        }
+        val seen = limits.filter { l -> cards.any { it.matches(l.bank, l.digits) } }
+        val stmt = statements.filter { st -> cards.any { it.matches(st.bank, st.digits) } }.maxByOrNull { it.statementDate }
         val limit = ownerLimitPaise ?: estimateLimit(seen)
 
         fun owed(t: Txn) = if (t.parsed.direction == Direction.DEBIT) t.amountPaise else -t.amountPaise
         val latestSeen = seen.maxByOrNull { it.at }
-        val outstanding = when {
+        val cardPays = mine.filter { it.kind == Kind.TRANSFER && it.parsed.direction == Direction.CREDIT }
+        // Paid by UPI from a bank account ("SBI Cards and Payment"): often only the account SMS arrives.
+        val accountPays = txns.filter {
+            it.category == "Card bill" && it.parsed.direction == Direction.DEBIT && it.parsed.source.type == SourceType.ACCOUNT &&
+                it.parsed.counterparty.orEmpty().uppercase().contains(bank)
+        }
+        // Account payments the card side never confirmed (no card credit of the same amount within 3 days). They lower
+        // the balance too, prepayments before the statement included, when they can only be for these cards.
+        val unconfirmed = if (!accountPaysHere) emptyList() else accountPays.filter { a ->
+            cardPays.none { c -> c.amountPaise == a.amountPaise && kotlin.math.abs(java.time.temporal.ChronoUnit.DAYS.between(a.day, c.day)) <= 3 }
+        }
+        fun paidAfter(after: (Txn) -> Boolean) = unconfirmed.filter(after).sumOf { it.amountPaise }
+        var outstanding = when {
             // Best: the bank told us the available limit; add what happened after that SMS.
-            limit != null && latestSeen != null -> limit - latestSeen.availablePaise + mine.filter { it.receivedAt > latestSeen.at }.sumOf(::owed)
+            limit != null && latestSeen != null -> limit - latestSeen.availablePaise + mine.filter { it.receivedAt > latestSeen.at }.sumOf(::owed) -
+                paidAfter { it.receivedAt > latestSeen.at }
             // Next best: the last statement's total, plus spends and minus payments since.
-            stmt?.totalDuePaise != null -> stmt.totalDuePaise + mine.filter { it.day > stmt.statementDate }.sumOf(::owed)
+            stmt?.totalDuePaise != null -> stmt.totalDuePaise + mine.filter { it.day > stmt.statementDate }.sumOf(::owed) -
+                paidAfter { it.day > stmt.statementDate }
             // Otherwise: this month's card activity.
-            else -> mine.filter { it.day > today.minusDays(30) }.sumOf(::owed)
+            else -> mine.filter { it.day > today.minusDays(30) }.sumOf(::owed) - paidAfter { it.day > today.minusDays(30) }
         }.coerceAtLeast(0L)
 
-        val paid = if (stmt == null) 0L else {
-            val cardSide = mine.filter { it.kind == Kind.TRANSFER && it.parsed.direction == Direction.CREDIT && it.day >= stmt.statementDate }.sumOf { it.amountPaise }
-            // Paid by UPI from a bank account ("SBI Cards and Payment"): only the account SMS may arrive. The larger
-            // side wins, so a payment confirmed on both sides is not counted twice.
-            val accountSide = txns.filter {
-                it.category == "Card bill" && it.parsed.direction == Direction.DEBIT && it.parsed.source.type == SourceType.ACCOUNT &&
-                    it.day >= stmt.statementDate && it.parsed.counterparty.orEmpty().uppercase().contains(card.bank)
-            }.sumOf { it.amountPaise }
+        var paid = if (stmt == null) 0L else {
+            val cardSide = cardPays.filter { it.day >= stmt.statementDate }.sumOf { it.amountPaise }
+            // The larger side wins, so a payment confirmed on both sides is not counted twice.
+            val accountSide = accountPays.filter { it.day >= stmt.statementDate }.sumOf { it.amountPaise }
             max(cardSide, accountSide)
         }
+        // "Mark paid": the owner paid but no SMS said so. Only what the SMS don't already show is added, so a payment
+        // SMS that turns up later is not counted twice.
+        if (stmt != null && marked != null && marked.statementDate == stmt.statementDate) {
+            val extra = max(0L, marked.amountPaise - paid)
+            paid += extra
+            // A newer "available limit" SMS already includes the payment.
+            if (latestSeen == null || marked.at > latestSeen.at) outstanding = (outstanding - extra).coerceAtLeast(0L)
+        }
         val day = ownerStatementDay ?: stmt?.statementDate?.dayOfMonth
-        return CardHealth(card, limit, ownerLimitPaise == null && limit != null, outstanding, stmt, day?.let { nextOn(it, today) }, paid)
+        return CardHealth(card, limit, ownerLimitPaise == null && limit != null, outstanding, stmt, day?.let { nextOn(it, today) }, paid, markedPaid = marked != null && stmt != null && marked.statementDate == stmt.statementDate)
+    }
+
+    /**
+     * Do cards [a] and [b] draw on one limit? Then their "available limit" SMS run as one balance: each is the one
+     * before it, from either card, minus what either card spent in between (refunds and payments add back). Two cards
+     * with limits of their own almost never line up like that to the rupee.
+     */
+    fun looksShared(a: Source, b: Source, limits: List<LimitSeen>, txns: List<Txn>): Boolean {
+        fun either(bank: String, digits: String?) = a.matches(bank, digits) || b.matches(bank, digits)
+        val seen = limits.filter { either(it.bank, it.digits) }.sortedBy { it.at }
+        val mine = txns.filter { either(it.parsed.source.bank, it.parsed.source.last4) && it.parsed.source.type == SourceType.CARD }
+        var hits = 0
+        var misses = 0
+        for ((p, n) in seen.zipWithNext()) {
+            // Two SMS from the same card say nothing about sharing.
+            if (a.matches(p.bank, p.digits) == a.matches(n.bank, n.digits)) continue
+            val between = mine.filter { it.receivedAt > p.at && !it.receivedAt.isAfter(n.at) }
+                .sumOf { if (it.parsed.direction == Direction.DEBIT) it.amountPaise else -it.amountPaise }
+            if (kotlin.math.abs(p.availablePaise - between - n.availablePaise) <= 100) hits++ else misses++
+        }
+        return hits >= 1 && hits >= misses
     }
 
     /** The next date (after today) that falls on day-of-month [day], clamped to short months. */

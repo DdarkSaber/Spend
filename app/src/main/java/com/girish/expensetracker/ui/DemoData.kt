@@ -32,6 +32,7 @@ object DemoData {
             com.girish.expensetracker.core.Source("SBI", "1111", com.girish.expensetracker.core.SourceType.CARD),
             com.girish.expensetracker.core.Source("SBI", "2222", com.girish.expensetracker.core.SourceType.CARD),
             com.girish.expensetracker.core.Source("ICICI", "9999", com.girish.expensetracker.core.SourceType.CARD),
+            com.girish.expensetracker.core.Source("ICICI", "8888", com.girish.expensetracker.core.SourceType.CARD),
         ),
         selfNames = setOf("DEMO USER"),
         selfVpas = setOf("demouser@okaxis"),
@@ -101,10 +102,13 @@ object DemoData {
         var avail = 66_000.0
         var cardDay = today.minusDays(27)
         val cardShops = listOf("AMAZON", "BOOKMYSHOW", "MYNTRA", "DECATHLON", "CROMA")
+        // Two ICICI cards on one shared limit (an add-on card): every third spend is on the add-on.
+        var k = 0
         while (!cardDay.isAfter(today)) {
             val spend = 900.0 + rnd.nextInt(0, 8) * 260.0
             avail -= spend
-            list.add(Sms("AD-ICICIT-S", "INR ${amt(spend)} spent using ICICI Bank Card XX9999 on ${cardDay.format(f("dd-MMM-yy"))} on ${cardShops[rnd.nextInt(cardShops.size)]}. Avl Limit: INR ${amt(avail)}. If not you, call 1800 2662.", cardDay.atTime(16, 20)))
+            val icici = if (k++ % 3 == 2) "8888" else "9999"
+            list.add(Sms("AD-ICICIT-S", "INR ${amt(spend)} spent using ICICI Bank Card XX$icici on ${cardDay.format(f("dd-MMM-yy"))} on ${cardShops[rnd.nextInt(cardShops.size)]}. Avl Limit: INR ${amt(avail)}. If not you, call 1800 2662.", cardDay.atTime(16, 20)))
             cardDay = cardDay.plusDays(4)
         }
         list.add(Sms("JM-ICICIT-S", "ICICI Bank Credit Card XX9999 Statement is sent to de***@mail.com. Total of Rs 18,240.00 or minimum of Rs 910.00 is due by ${today.plusDays(2).format(f("dd-MMM-yy")).uppercase()}.", today.minusDays(16).atTime(9, 0)))
@@ -121,7 +125,7 @@ object DemoData {
             list.add(Sms("AD-HDFCBK-S", "PAYMENT ALERT! INR 4250.00 deducted from HDFC Bank A/C No 1234 towards BAJAJ FINANCE LTD UMRN: DEMO${emi.monthValue}", emi.atTime(7, 30)))
             emi = emi.plusMonths(1)
         }
-        // One layout the reader does not know yet, and one card that is not tracked.
+        // A refund with no card number (two ICICI cards: the owner is asked which), and one card that is not tracked.
         list.add(Sms("VA-ICICIT-S", "Refund of INR 499.00 credited to your ICICI Bank Card for DEMO STORE on ${today.minusDays(3).format(f("dd-MMM-yy"))}.", today.minusDays(3).atTime(18, 30)))
         list.add(Sms("JD-HDFCBK-S", "Spent Rs.250 On HDFC Bank Card 9911 At ..DEMO CAFE_ On ${today.minusDays(5).format(f("yyyy-MM-dd"))}:12:10:00.", today.minusDays(5).atTime(12, 10)))
         return list.sortedBy { it.at }

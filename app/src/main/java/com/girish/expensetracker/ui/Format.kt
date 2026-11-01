@@ -86,6 +86,8 @@ fun cycleMonth(start: java.time.LocalDate): String =
 fun sourceLabel(s: Source): String = when {
     s.bank == "CASH" -> "Cash"
     s.type == SourceType.CARD && s.last4 == "*" -> "${s.bank} card"
+    com.girish.expensetracker.core.CardGroup.isGroup(s) -> "${s.bank} cards"
+    s.type == SourceType.CARD && s.last4 == com.girish.expensetracker.core.UNASSIGNED -> "${s.bank} card · not assigned"
     s.type == SourceType.CARD -> "${s.bank} card ${s.last4}"
     else -> "${s.bank} a/c ${s.last4}"
 }

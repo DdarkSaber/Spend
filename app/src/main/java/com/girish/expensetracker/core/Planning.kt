@@ -112,7 +112,7 @@ object Alerts {
                     add(
                         Alert(
                             "util30|${c.card}|${c.nextStatement}",
-                            "${label(c.card)} is at ${(u * 100).toInt()}% of its limit",
+                            "${c.title ?: label(c.card)} is at ${(u * 100).toInt()}% of its limit",
                             "Pay ${money(c.payToReach(Credit.HEALTHY))} before ${date(c.nextStatement)} to report under 30%. Under 10% is best.",
                         ),
                     )
@@ -131,7 +131,7 @@ object Alerts {
                         add(
                             Alert(
                                 "due|${c.card}|${s.dueDate}|$stage",
-                                if (stage == "today") "${label(c.card)} bill is due today" else "${label(c.card)} bill due ${date(s.dueDate)}",
+                                if (stage == "today") "${c.title ?: label(c.card)} bill is due today" else "${c.title ?: label(c.card)} bill due ${date(s.dueDate)}",
                                 "${money(left)} left to pay$min.",
                             ),
                         )

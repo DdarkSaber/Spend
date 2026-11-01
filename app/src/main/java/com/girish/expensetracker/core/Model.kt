@@ -113,7 +113,8 @@ data class Profile(
 ) {
     fun isKnown(s: Source): Boolean = acceptAll || when (s.type) {
         SourceType.ACCOUNT -> s in accounts
-        SourceType.CARD -> if (s.last4 == "*") cards.any { it.bank == s.bank } else s in cards
+        // "*" (SBI bill payments) and "?" (no card number in the SMS): any card of the owner's at that bank.
+        SourceType.CARD -> if (s.last4 == "*" || s.last4 == "?") cards.any { it.bank == s.bank } else s in cards
     }
 
     private val selfNameKeys by lazy { selfNames.map(::normalizeName).toSet() }
