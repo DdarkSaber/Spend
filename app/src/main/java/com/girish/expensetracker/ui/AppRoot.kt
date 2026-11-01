@@ -170,7 +170,33 @@ fun AppRoot(
                         },
                         onRow = openRow,
                     )
-                    Tab.CARDS -> CardsScreen(s, isNew, onCardSettings = { ctl.sheet = Sheet.CardSettings(it) }, onRow = openRow)
+                    Tab.CARDS -> CardsScreen(s, isNew, onCardSettings = { ctl.sheet = Sheet.CardSettings(it) },
+                        onGroupCards = { g ->
+                            // Two cards: group them now (with Undo). More: let the owner untick the ones on another statement.
+                            if (g.cards.size == 2) {
+                                var id: String? = null
+                                ctl.act(undo = { id?.let { saveCardGroup(it, g.bank, emptyList(), true) }; allowCardGroupSuggestion(g.bank) }) {
+                                    id = saveCardGroup(null, g.bank, g.cards, true); "Grouped ${g.bank} ${g.cards.joinToString(" & ") { it.last4 }} · tap ✎ to set the limit"
+                                }
+                            } else s.cards.firstOrNull { it.card in g.cards }?.let { ctl.sheet = Sheet.CardSettings(it, preselect = g.cards) }
+                        },
+                        onPickCard = { row, card, always ->
+                            val shop = row.txn.parsed.counterparty?.takeIf { always && it.isNotBlank() }
+                            ctl.act(closeSheet = false, undo = { clearCardOfSms(row.smsId!!); shop?.let { setCardOfShop(it, null) } }) {
+                                setCardOfSms(row.smsId!!, card)
+                                shop?.let { setCardOfShop(it, card) }
+                                "Put on ${sourceLabel(card)}" + (shop?.let { " · always for $it" } ?: "")
+                            }
+                        },
+                        onMarkPaid = { h, paid ->
+                            val name = h.title ?: sourceLabel(h.card)
+                            // What's left of the bill (or the whole bill) is what the owner says they paid.
+                            val amount = h.billLeftPaise?.takeIf { it > 0 } ?: h.statement?.totalDuePaise ?: 0L
+                            if (paid) ctl.act(undo = { markPaid(h, null) }) { markPaid(h, amount); "$name bill marked paid" }
+                            else ctl.act(undo = { markPaid(h, amount) }) { markPaid(h, null); "$name bill back to unpaid" }
+                        },
+                        onDeclineGroup = { bank -> ctl.act(undo = { allowCardGroupSuggestion(bank) }) { declineCardGroup(bank); "OK, $bank cards stay separate" } },
+                        onRow = openRow)
                     Tab.PEOPLE -> PeopleScreen(
                         s,
                         onSettle = { d -> ctl.act { settleDebt(d, s.rows); "${d.name} is settled" } },
@@ -251,4 +277,6 @@ private fun moreActions(ctl: AppController, s: Snapshot, pickers: Pickers, onBat
     battery = onBattery,
     streak = { ctl.sheet = Sheet.Streak },
     year = { ctl.page = Page.Year },
+    editCardGroup = { h -> ctl.sheet = Sheet.CardSettings(h) },
+    askCardGroupsAgain = { bank -> ctl.act(undo = { declineCardGroup(bank) }) { allowCardGroupSuggestion(bank); "Grouping suggestion for $bank is back on the Cards tab" } },
 )

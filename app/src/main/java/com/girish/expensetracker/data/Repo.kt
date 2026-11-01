@@ -3,6 +3,9 @@ package com.girish.expensetracker.data
 import com.girish.expensetracker.core.BudgetLine
 import com.girish.expensetracker.core.Budgets
 import com.girish.expensetracker.core.CardFacts
+import com.girish.expensetracker.core.CardGroup
+import com.girish.expensetracker.core.UNASSIGNED
+import com.girish.expensetracker.core.normalizeName
 import com.girish.expensetracker.core.CardHealth
 import com.girish.expensetracker.core.CardStatement
 import com.girish.expensetracker.core.Classifier
@@ -89,12 +92,81 @@ data class Snapshot(
     val monthTotal: Long by lazy { Ledger.month(txns, today) }
     val cycleStart: LocalDate by lazy { Ledger.cycleStart(today, txns) }
 
-    /** Every tracked credit card (or, before setup, every card seen) with its utilisation and bill. */
-    val cards: List<CardHealth> by lazy {
-        val tracked = owner?.tracked?.filter { it.type == SourceType.CARD && it.last4 != "*" }
-            ?: txns.map { it.parsed.source }.filter { it.type == SourceType.CARD && it.last4 != "*" }.distinct()
-        tracked.map { c -> Credit.health(c, txns, statements, limitsSeen, plan.cardLimits[sourceKey(c)], plan.statementDays[sourceKey(c)], today) }
+    /** Every tracked credit card (or, before setup, every card seen), bank A to Z then last digits. */
+    val trackedCards: List<Source> by lazy {
+        // "*" and "?" stand for "some card of this bank", not a card of their own.
+        fun real(s: Source) = s.type == SourceType.CARD && s.last4 != "*" && s.last4 != UNASSIGNED
+        (owner?.tracked?.filter(::real) ?: txns.map { it.parsed.source }.filter(::real).distinct())
+            .sortedWith(compareBy({ it.bank }, { it.last4 }))
     }
+
+    /** The owner's card groups, keeping only cards still tracked; a group left with one card is just that card. */
+    val cardGroups: List<CardGroup> by lazy {
+        plan.cardGroups.map { g -> g.copy(cards = trackedCards.filter { c -> g.cards.any { it.bank == c.bank && it.last4 == c.last4 } }) }
+            .filter { it.cards.size >= 2 }
+    }
+
+    /** Banks with 2+ ungrouped cards that the owner hasn't said "no" to: offer to group them. */
+    val cardGroupSuggestions: List<CardGroup> by lazy {
+        val grouped = cardGroups.flatMap { it.cards }.toSet()
+        trackedCards.filter { it !in grouped && it.bank !in plan.cardGroupsDeclined && cardGroups.none { g -> g.bank == it.bank } }
+            .groupBy { it.bank }.filterValues { it.size >= 2 }.map { (bank, cs) -> CardGroup(bank, cs) }
+    }
+
+    /** For each suggested bank, the cards whose "available limit" SMS run as one balance: very likely one shared limit. */
+    val likelyShared: Map<String, List<Source>> by lazy {
+        cardGroupSuggestions.associate { g ->
+            g.bank to g.cards.filter { c -> g.cards.any { o -> o != c && Credit.looksShared(c, o, limitsSeen, txns) } }
+        }.filterValues { it.size >= 2 }
+    }
+
+    /** Banks where the owner said no to grouping but still has 2+ ungrouped cards: they can ask again from More. */
+    val cardGroupsOff: List<String> by lazy {
+        val grouped = cardGroups.flatMap { it.cards }.toSet()
+        plan.cardGroupsDeclined.filter { bank -> trackedCards.count { it.bank == bank && it !in grouped } >= 2 }.sorted()
+    }
+
+    /** The group a card is in; a "*" or "?" card (no digits) is the group's when it holds every card of the bank. */
+    fun groupOf(card: Source): CardGroup? =
+        cardGroups.firstOrNull { card in it.cards } ?: if (card.last4 == "*" || card.last4 == UNASSIGNED)
+            cardGroups.firstOrNull { g -> g.bank == card.bank && trackedCards.filter { it.bank == card.bank }.all { it in g.cards } } else null
+
+    /** "ICICI cards", or "ICICI cards 1111 + 9999" when the bank has more than one group, or the owner's own name. */
+    fun groupTitle(g: CardGroup): String =
+        g.name ?: if (cardGroups.count { it.bank == g.bank } > 1) "${g.bank} cards ${g.cards.joinToString(" + ") { it.last4 }}" else "${g.bank} cards"
+
+    /** Card spends and refunds whose SMS had no card number, at a bank where the owner has more than one card: ask which. */
+    val unassignedCardRows: List<Row> by lazy {
+        rows.filter { r ->
+            val s = r.txn.parsed.source
+            r.smsId != null && s.type == SourceType.CARD && s.last4 == UNASSIGNED && trackedCards.count { it.bank == s.bank } >= 2
+        }.sortedByDescending { it.txn.receivedAt }
+    }
+
+    /** Utilisation and bill per card, with grouped cards shown once as their group; bank A to Z. */
+    val cards: List<CardHealth> by lazy {
+        val grouped = cardGroups.flatMap { it.cards }.toSet()
+        val single = trackedCards.filter { it !in grouped }.map { c ->
+            Credit.health(
+                c, txns, statements, limitsSeen, plan.cardLimits[sourceKey(c)], plan.statementDays[sourceKey(c)], today,
+                marked = plan.markedPaid[sourceKey(c)],
+                accountPaysHere = trackedCards.count { it.bank == c.bank } == 1,
+            )
+        }
+        val groups = cardGroups.map { g ->
+            val key = sourceKey(g.anchor)
+            Credit.groupHealth(
+                g, txns, statements, limitsSeen, plan.cardLimits[key], plan.statementDays[key],
+                g.cards.mapNotNull { c -> plan.cardLimits[sourceKey(c)]?.let { c to it } }.toMap(), today,
+                // Not yet put on a card, but it can only be this group's: it holds every card of the bank.
+                unassigned = trackedCards.filter { it.bank == g.bank }.all { it in g.cards },
+                title = groupTitle(g),
+                marked = plan.markedPaid[key],
+            )
+        }
+        (single + groups).sortedWith(compareBy({ it.card.bank }, { if (it.isGroup) it.members.first().card.last4 else it.card.last4 }))
+    }
+
 
     val budgets: List<BudgetLine> by lazy { Budgets.lines(txns, cycleStart, today, plan.budgetTotal, plan.budgetByCategory) }
 
@@ -138,6 +210,12 @@ data class Plan(
     /** Daily limit for the low-spend streak; null = suggested from the owner's own days. */
     val streakLimit: Long? = null,
     val groups: List<FriendGroup> = emptyList(),
+    /** Cards of one bank that share a statement (and usually a limit). */
+    val cardGroups: List<CardGroup> = emptyList(),
+    /** Banks where the owner said their cards are not to be grouped: no more suggestions. */
+    val cardGroupsDeclined: Set<String> = emptySet(),
+    /** Card (or group) key -> the statement the owner marked as paid. */
+    val markedPaid: Map<String, com.girish.expensetracker.core.MarkedPaid> = emptyMap(),
 )
 
 /** A named set of people (flatmates) to split with in one tap. Labels are how each appears in bank SMS. */
@@ -165,6 +243,12 @@ private const val KEY_ALERTS_SENT = "alerts_sent"
 private const val KEY_SETTLED_LOANS = "settled_loans"
 private const val KEY_STREAK_LIMIT = "streak_limit"
 private const val KEY_GROUPS = "groups"
+private const val KEY_CARD_GROUPS = "card_groups"
+private const val KEY_CARD_GROUPS_DECLINED = "card_groups_declined"
+private const val KEY_CARD_OF_SMS = "card_of_sms"
+private const val KEY_CARD_OF_SHOP = "card_of_shop"
+private const val KEY_MARKED_PAID = "marked_paid"
+private val NL = 10.toChar().toString()
 
 class Repo(val store: Store) {
 
@@ -262,6 +346,9 @@ class Repo(val store: Store) {
         val dismissedRent = lines(KEY_RENT_DISMISSED)
         val rentPayees = lines(KEY_RENT).mapNotNull { l -> l.split('|').takeIf { it.size == 2 }?.let { it[0] to (it[1].toLongOrNull() ?: 0L) } }
 
+        val cardOfSms = cardOfSms()
+        val cardOfShop = cardOfShop()
+        val cacheKey = listOf(profile, learned)
         val rows = mutableListOf<Row>()
         val unparsed = mutableListOf<UnparsedSms>()
         val newSources = linkedMapOf<Source, String>()
@@ -276,15 +363,28 @@ class Repo(val store: Store) {
             lastSeen[dupKey] = sms.receivedAt
             if (prev != null && kotlin.math.abs(sms.receivedAt - prev) < 600_000L) continue
             val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(sms.receivedAt), zone)
-            // Statement and limit SMS move no money but tell how each credit card stands.
-            CardFacts.statement(sms.sender, sms.body, at)?.let { statements += it }
-            CardFacts.limit(sms.sender, sms.body, at)?.let { limits += it }
-            if (at.toLocalDate() >= today.minusDays(7)) {
-                SmsReader.bankOf(sms.sender)?.let { bank -> UnusualSpend.foreignCharge(bank, sms.body, at)?.let { foreign += it } }
+            // Reading an SMS is the slow part, and its result only changes when the owner's cards or taught layouts do.
+            val read = readCached(sms.id, cacheKey) {
+                ReadSms(
+                    SmsReader.read(sms.sender, sms.body, profile, learned),
+                    CardFacts.statement(sms.sender, sms.body, at),
+                    CardFacts.limit(sms.sender, sms.body, at),
+                    SmsReader.bankOf(sms.sender)?.let { bank -> UnusualSpend.foreignCharge(bank, sms.body, at) },
+                )
             }
-            when (val r = SmsReader.read(sms.sender, sms.body, profile, learned)) {
+            // Statement and limit SMS move no money but tell how each credit card stands.
+            read.statement?.let { statements += it }
+            read.limit?.let { limits += it }
+            if (at.toLocalDate() >= today.minusDays(7)) read.foreign?.let { foreign += it }
+            when (val r = read.result) {
                 is ReadResult.Parsed -> {
                     var t = Classifier.classify(r.parsed, at, profile, rules)
+                    // A card SMS without a card number, put on a card by the owner.
+                    if (t.parsed.source.type == SourceType.CARD && t.parsed.source.last4 == UNASSIGNED) {
+                        val bank = t.parsed.source.bank
+                        (cardOfSms[sms.id] ?: t.parsed.counterparty?.let { cardOfShop["$bank|${normalizeName(it)}"] })
+                            ?.let { d -> t = t.copy(parsed = t.parsed.copy(source = Source(bank, d, SourceType.CARD))) }
+                    }
                     val forced = overrides[sms.id]
                     if (forced != null && (t.kind == Kind.SPEND || t.kind == Kind.LENT)) {
                         t = t.copy(
@@ -386,7 +486,109 @@ class Repo(val store: Store) {
         budgetByCategory = keyed(KEY_BUDGETS),
         streakLimit = store.setting(KEY_STREAK_LIMIT)?.toLongOrNull()?.takeIf { it > 0 },
         groups = groups(),
+        cardGroups = cardGroups(),
+        cardGroupsDeclined = lines(KEY_CARD_GROUPS_DECLINED),
+        markedPaid = markedPaid(),
     )
+
+    // "Mark paid", one per card or group: key=statementDate|amountPaise|markedAtMillis. A newer statement replaces it.
+    private fun markedPaid(): Map<String, com.girish.expensetracker.core.MarkedPaid> = lines(KEY_MARKED_PAID).mapNotNull { l ->
+        val parts = l.substringAfterLast('=').split('|')
+        if (parts.size != 3) return@mapNotNull null
+        val day = runCatching { LocalDate.parse(parts[0]) }.getOrNull() ?: return@mapNotNull null
+        val at = parts[2].toLongOrNull()?.let { LocalDateTime.ofInstant(Instant.ofEpochMilli(it), zone) } ?: return@mapNotNull null
+        l.substringBeforeLast('=') to com.girish.expensetracker.core.MarkedPaid(day, parts[1].toLongOrNull() ?: 0L, at)
+    }.toMap()
+
+    /** The owner paid [h]'s latest statement but no payment SMS came; null [amountPaise] takes the mark back. */
+    fun markPaid(h: CardHealth, amountPaise: Long?) {
+        val key = sourceKey(h.card)
+        val others = lines(KEY_MARKED_PAID).filterNot { it.substringBeforeLast('=') == key }
+        val stmt = h.statement
+        val mine = if (amountPaise == null || stmt == null) null else "$key=${stmt.statementDate}|$amountPaise|${System.currentTimeMillis()}"
+        store.setSetting(KEY_MARKED_PAID, (others + listOfNotNull(mine)).joinToString(NL))
+    }
+
+    // Card groups are stored one per line: BANK|shared (1 or 0)|last4;last4|id|name. Lines saved before a bank could
+    // have several groups have only the first three parts; their id is "group".
+    private fun cardGroups(): List<CardGroup> = lines(KEY_CARD_GROUPS).mapNotNull { l ->
+        val parts = l.split('|')
+        if (parts.size < 3) return@mapNotNull null
+        CardGroup(
+            bank = parts[0],
+            cards = parts[2].split(';').filter { it.isNotBlank() }.map { Source(parts[0], it, SourceType.CARD) },
+            sharedLimit = parts[1] != "0",
+            id = parts.getOrNull(3)?.takeIf { it.startsWith(CardGroup.DIGITS) } ?: CardGroup.DIGITS,
+            name = parts.getOrNull(4)?.takeIf { it.isNotBlank() },
+        )
+    }
+
+    /**
+     * Saves group [id] (null = a new group) with [cards] of one bank. Fewer than two cards removes the group. A card
+     * can be in one group only, so it leaves any other group. Returns the group's id, or null when it was removed.
+     */
+    fun saveCardGroup(id: String?, bank: String, cards: List<Source>, sharedLimit: Boolean, name: String? = null): String? {
+        val mine = cards.filter { it.bank == bank }.map { it.last4 }.distinct()
+        val all = cardGroups()
+        val others = all.filterNot { it.bank == bank && it.id == id }
+            .map { g -> g.copy(cards = g.cards.filterNot { g.bank == bank && it.last4 in mine }) }
+            .filter { it.cards.size >= 2 }
+        val newId = id ?: generateSequence(0) { it + 1 }.map { if (it == 0) CardGroup.DIGITS else "${CardGroup.DIGITS}$it" }
+            .first { c -> all.none { it.bank == bank && it.id == c } }
+        val kept = if (mine.size >= 2) CardGroup(bank, mine.map { Source(bank, it, SourceType.CARD) }, sharedLimit, newId, name?.let(::clean)?.ifBlank { null }) else null
+        store.setSetting(KEY_CARD_GROUPS, (others + listOfNotNull(kept)).joinToString("\n") { g ->
+            listOf(g.bank, if (g.sharedLimit) "1" else "0", g.cards.joinToString(";") { it.last4 }, g.id, g.name.orEmpty()).joinToString("|")
+        })
+        // Grouped or split up by hand: either way the owner has decided, so stop suggesting it.
+        declineCardGroup(bank)
+        return kept?.id
+    }
+
+    /** What reading one SMS gave; kept between snapshots. */
+    private class ReadSms(val result: ReadResult, val statement: CardStatement?, val limit: LimitSeen?, val foreign: Unusual?)
+
+    private val readCache = HashMap<Long, ReadSms>()
+    private var readCacheKey: Any? = null
+
+    /** The cached reading of SMS [id], valid while [key] (the owner's cards and taught layouts) is unchanged. */
+    private fun readCached(id: Long, key: Any, read: () -> ReadSms): ReadSms = synchronized(readCache) {
+        if (readCacheKey != key) { readCache.clear(); readCacheKey = key }
+        readCache.getOrPut(id, read)
+    }
+
+    // Shop -> card for card SMS without a card number: "BANK|shop=last4".
+    private fun cardOfShop(): Map<String, String> =
+        lines(KEY_CARD_OF_SHOP).filter { '=' in it }.associate { it.substringBeforeLast('=') to it.substringAfterLast('=') }
+
+    /** Always put [shop]'s card SMS without a card number on [card]; null [card] forgets it. */
+    fun setCardOfShop(shop: String, card: Source?) {
+        val key = "${card?.bank ?: ""}|${normalizeName(shop)}"
+        val all = cardOfShop().filterKeys { it.substringAfter('|') != normalizeName(shop) || (card != null && it.substringBefore('|') != card.bank) }
+        store.setSetting(KEY_CARD_OF_SHOP, (if (card == null) all else all + (key to card.last4)).entries.joinToString("\n") { "${it.key}=${it.value}" })
+    }
+
+    /** Undo for [setCardOfSms]. */
+    fun clearCardOfSms(smsId: Long) =
+        store.setSetting(KEY_CARD_OF_SMS, (cardOfSms() - smsId).entries.joinToString("\n") { "${it.key}=${it.value}" })
+
+    /** Undo for [declineCardGroup]: suggest grouping this bank's cards again. */
+    fun allowCardGroupSuggestion(bank: String) =
+        store.setSetting(KEY_CARD_GROUPS_DECLINED, (lines(KEY_CARD_GROUPS_DECLINED) - bank).joinToString("\n"))
+
+    /** Puts a removed group back exactly as it was (undo for ungroup). */
+    fun restoreCardGroup(g: CardGroup) { saveCardGroup(g.id, g.bank, g.cards, g.sharedLimit, g.name) }
+
+    private fun cardOfSms(): Map<Long, String> =
+        lines(KEY_CARD_OF_SMS).mapNotNull { l -> l.substringBefore('=').toLongOrNull()?.let { it to l.substringAfter('=') } }.toMap()
+
+    /** Puts a card SMS that printed no card number on one of the owner's cards. */
+    fun setCardOfSms(smsId: Long, card: Source) =
+        store.setSetting(KEY_CARD_OF_SMS, (cardOfSms() + (smsId to card.last4)).entries.joinToString("\n") { "${it.key}=${it.value}" })
+
+    /** "No" on the suggestion: these cards have separate statements. */
+
+    fun declineCardGroup(bank: String) =
+        store.setSetting(KEY_CARD_GROUPS_DECLINED, (lines(KEY_CARD_GROUPS_DECLINED) + bank).joinToString("\n"))
 
     /** null goes back to the suggested limit. */
     fun setStreakLimit(paise: Long?) = store.setSetting(KEY_STREAK_LIMIT, (paise ?: 0L).toString())

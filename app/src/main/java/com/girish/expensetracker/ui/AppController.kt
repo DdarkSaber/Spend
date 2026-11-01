@@ -20,7 +20,8 @@ import kotlinx.coroutines.withContext
 internal sealed interface Sheet {
     data class Payment(val row: Row) : Sheet
     data class Split(val row: Row) : Sheet
-    data class CardSettings(val card: CardHealth) : Sheet
+    /** [preselect]: cards to start with ticked, from the "group your cards?" suggestion. */
+    data class CardSettings(val card: CardHealth, val preselect: List<com.girish.expensetracker.core.Source>? = null) : Sheet
     data object Budgets : Sheet
     data class Password(val purpose: Purpose) : Sheet { enum class Purpose { SAVE, RESTORE, AUTO } }
     data class ImportCsv(val result: StatementCsv.Result) : Sheet
@@ -57,13 +58,23 @@ internal class AppController(val context: Context, val repo: Repo, private val s
 
     fun say(message: String) { scope.launch { snackbar.showSnackbar(message) } }
 
-    /** Do [work] on a background thread; show the message it returns (if any), close the sheet and reload. */
-    fun act(closeSheet: Boolean = true, work: suspend Repo.() -> String?) {
+    /**
+     * Do [work] on a background thread; show the message it returns (if any), close the sheet and reload. With [undo],
+     * the message offers "Undo", which runs it (also off the main thread) and reloads again.
+     */
+    fun act(closeSheet: Boolean = true, undo: (suspend Repo.() -> Unit)? = null, work: suspend Repo.() -> String?) {
         scope.launch {
-            val message = runCatching { withContext(Dispatchers.IO) { repo.work() } }.getOrElse { "Something went wrong: ${it.message}" }
+            var failed = false
+            val message = runCatching { withContext(Dispatchers.IO) { repo.work() } }.getOrElse { failed = true; "Something went wrong: ${it.message}" }
             if (closeSheet) sheet = null
-            message?.let(::say)
             reload()
+            if (message == null) return@launch
+            if (undo == null || failed) { say(message); return@launch }
+            val r = snackbar.showSnackbar(message, actionLabel = "Undo", duration = androidx.compose.material3.SnackbarDuration.Long)
+            if (r == androidx.compose.material3.SnackbarResult.ActionPerformed) {
+                runCatching { withContext(Dispatchers.IO) { repo.undo() } }
+                reload()
+            }
         }
     }
 

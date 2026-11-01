@@ -1,0 +1,6 @@
+• Card groups: cards on one statement shown once, each card's share inside; shared or added-up limits
+• Suggests groups from your limit SMS; Undo; manage in More
+• Which card? Pick the card for SMS with no card number
+• Mark a bill paid; UPI prepayments lower the balance
+• Statement and salary day from a calendar grid
+• Cards sorted by bank; faster reloads

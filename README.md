@@ -16,7 +16,7 @@ No sign-up · no bank login · no internet permission · everything stays on the
 
 ## Download
 
-1. Get **`Spend-v0.3.0.apk`** from [Releases](../../releases/latest)
+1. Get **`Spend-v1.0.0.apk`** from [Releases](../../releases/latest)
 2. Android 12 or newer; allow "Install unknown apps" when asked
 3. Open it, tap **Grant permissions**. Your last 120 days of bank SMS are read once
 

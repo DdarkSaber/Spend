@@ -27,6 +27,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.foundation.clickable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -111,11 +112,15 @@ internal fun OwnerSheet(
             }
             item {
                 Text("Salary month starts on", style = MaterialTheme.typography.titleSmall, color = t.ink)
+                var picking by remember { mutableStateOf(false) }
+                if (picking) DayGridDialog(day, onDismiss = { picking = false }) { day = it; picking = false }
                 Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     RoundIcon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Earlier day", { day = if (day <= 1) 31 else day - 1 }, size = 40.dp)
                     Text(
                         "${day}${ordinal(day)}", style = MaterialTheme.typography.headlineSmall, color = t.ink,
-                        modifier = Modifier.width(96.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        // Tap the day to pick it from a calendar grid; the arrows step one day.
+                        modifier = Modifier.width(96.dp).clickable(onClickLabel = "Pick a day") { picking = true },
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                     )
                     RoundIcon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Later day", { day = if (day >= 31) 1 else day + 1 }, size = 40.dp)
                     Spacer(Modifier.width(12.dp))

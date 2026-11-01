@@ -123,8 +123,10 @@ internal fun DaysScreen(
             val avg = monthSeries.total / monthSeries.days.size.coerceAtLeast(1)
             val priorAvg = monthSeries.priorTotal / monthSeries.days.size.coerceAtLeast(1)
             val best = monthSeries.now.indices.maxByOrNull { monthSeries.now[it] }
-            val paidBack = snap.rows.filter { it.txn.day >= snap.cycleStart && Ledger.monthAmount(it.txn) < 0 }.sumOf { -Ledger.monthAmount(it.txn) }
-            val payments = snap.rows.count { it.txn.day >= snap.cycleStart && Ledger.monthAmount(it.txn) > 0 }
+            val (paidBack, payments) = androidx.compose.runtime.remember(snap) {
+                val month = snap.rows.filter { it.txn.day >= snap.cycleStart }.map { Ledger.monthAmount(it.txn) }
+                month.filter { it < 0 }.sumOf { -it } to month.count { it > 0 }
+            }
             val diff = p.nowToday - p.lastSameDay
             StatGrid(
                 listOf(

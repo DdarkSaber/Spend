@@ -61,8 +61,34 @@ internal fun SheetHost(ctl: AppController, snap: Snapshot, pickers: Pickers) {
             },
         )
 
-        is Sheet.CardSettings -> CardSettingsSheet(sheet.card, onDismiss = close) { limit, day ->
-            ctl.act { setCardLimit(sheet.card.card, limit); setStatementDay(sheet.card.card, day); "Saved ${sourceLabel(sheet.card.card)}" }
+        is Sheet.CardSettings -> {
+            val h = sheet.card
+            val bank = h.card.bank
+            // This group's id (null for a single card, or a new group); cards in the bank's other groups aren't offered.
+            val group = snap.cardGroups.firstOrNull { h.isGroup && it.anchor == h.card }
+            val elsewhere = snap.cardGroups.filter { it.bank == bank && it != group }.flatMap { it.cards }.toSet()
+            val sameBank = snap.trackedCards.filter { it.bank == bank && it !in elsewhere }
+            val ownLimits = sameBank.mapNotNull { c -> snap.plan.cardLimits[com.girish.expensetracker.data.sourceKey(c)]?.let { c to it } }.toMap()
+            CardSettingsSheet(h, sameBank, ownLimits, groupName = group?.name, preselect = sheet.preselect, onDismiss = close) { s ->
+                // Undo puts an ungrouped group back as it was.
+                ctl.act(undo = if (group != null && s.cards.size < 2) ({ restoreCardGroup(group) }) else null) {
+                    if (s.cards.size >= 2) {
+                        val id = saveCardGroup(group?.id, bank, s.cards, s.sharedLimit, s.name)!!
+                        val anchor = com.girish.expensetracker.core.Source(bank, id, com.girish.expensetracker.core.SourceType.CARD)
+                        if (s.sharedLimit) setCardLimit(anchor, s.limitPaise) else s.cardLimits.forEach { (c, v) -> setCardLimit(c, v) }
+                        setStatementDay(anchor, s.statementDay)
+                        "Grouped ${s.cards.size} $bank cards"
+                    } else if (group != null) {
+                        // The group's shared limit isn't this one card's limit: each card keeps its own settings.
+                        saveCardGroup(group.id, bank, emptyList(), true)
+                        "Ungrouped $bank cards"
+                    } else {
+                        val card = s.cards.single()
+                        setCardLimit(card, s.limitPaise); setStatementDay(card, s.statementDay)
+                        "Saved ${sourceLabel(card)}"
+                    }
+                }
+            }
         }
 
         Sheet.Budgets -> BudgetSheet(snap.plan, used = Ledger.byCategory(snap.txns, snap.today).filterValues { it > 0 }.keys.sorted(), onDismiss = close) { total, perCat ->

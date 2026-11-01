@@ -2,6 +2,15 @@
 
 package com.girish.expensetracker.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -64,6 +73,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.girish.expensetracker.core.BudgetLine
+import com.girish.expensetracker.core.CardGroup
 import com.girish.expensetracker.core.CardHealth
 import com.girish.expensetracker.core.Credit
 import com.girish.expensetracker.core.Debt
@@ -99,10 +109,10 @@ internal fun fieldColors() = LocalTones.current.let { t ->
 
 /** How much of the limit is used, with the 10% and 30% marks, and what to pay before the statement. */
 @Composable
-internal fun CardHealthPanel(h: CardHealth, onEdit: () -> Unit) {
+internal fun CardHealthPanel(h: CardHealth, onEdit: () -> Unit, onMarkPaid: ((Boolean) -> Unit)? = null) {
     val t = LocalTones.current
     Panel {
-        PanelHeader(sourceLabel(h.card), h.nextStatement?.let { "statement ${it.format(dm)}" }) {
+        PanelHeader(h.title ?: sourceLabel(h.card), h.nextStatement?.let { "statement ${it.format(dm)}" }) {
             RoundIcon(Icons.Outlined.Edit, "Set limit and statement day", onEdit, size = 34.dp)
         }
         val u = h.utilization
@@ -134,6 +144,7 @@ internal fun CardHealthPanel(h: CardHealth, onEdit: () -> Unit) {
             }
             Text(advice, style = MaterialTheme.typography.bodyMedium, color = if (u >= Credit.HEALTHY) t.warn else t.ink2)
         }
+        if (h.isGroup) GroupMembers(h)
         h.statement?.let { s ->
             Gap(12.dp)
             Hairline()
@@ -152,14 +163,158 @@ internal fun CardHealthPanel(h: CardHealth, onEdit: () -> Unit) {
                     )
                 }
                 when {
+                    h.markedPaid -> Tag("paid")
                     left == null -> Unit
                     left == 0L -> Tag("paid")
                     else -> Text(rupees(left) + " due", style = AmountStyle, color = if (s.dueDate != null && !s.dueDate.isAfter(LocalDate.now().plusDays(3))) t.warn else t.ink)
                 }
             }
+            // The payment SMS didn't come (or never comes for this bank): the owner says it's paid, so it stops showing as due.
+            if (onMarkPaid != null) when {
+                h.markedPaid -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("You marked this paid.", style = MaterialTheme.typography.bodySmall, color = t.ink3, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { onMarkPaid(false) }) { Text("Not paid", color = t.ink2) }
+                }
+                left != null && left > 0 -> TextButton(onClick = { onMarkPaid(true) }, contentPadding = PaddingValues(0.dp)) {
+                    Text("Paid already? Mark paid", color = t.accent)
+                }
+                left == null && s.totalDuePaise == null -> TextButton(onClick = { onMarkPaid(true) }, contentPadding = PaddingValues(0.dp)) {
+                    Text("Mark this statement paid", color = t.accent)
+                }
+            }
         }
     }
 }
+
+/** Each card of a group with its part of the balance; tap the row to open or close. */
+@Composable
+private fun GroupMembers(h: CardHealth) {
+    val t = LocalTones.current
+    var open by remember { mutableStateOf(false) }
+    Gap(12.dp)
+    Hairline()
+    Row(
+        Modifier.fillMaxWidth().clickable { open = !open }.padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            "${h.members.size} cards" + if (h.sharedLimit) " · one shared limit" else " · limits added up",
+            style = MaterialTheme.typography.titleSmall, color = t.ink, modifier = Modifier.weight(1f),
+        )
+        Text(if (open) "▴" else "▾", style = MaterialTheme.typography.titleMedium, color = t.ink2)
+    }
+    AnimatedVisibility(open, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+        Column {
+            h.members.forEach { m ->
+                Row(Modifier.fillMaxWidth().padding(start = 4.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Card ${m.card.last4}", style = MaterialTheme.typography.bodyMedium, color = t.ink, modifier = Modifier.weight(1f))
+                    val mu = m.utilization
+                    if (mu != null) {
+                        Text("${(mu * 100).toInt()}%", style = AmountStyle, color = if (!h.sharedLimit && mu >= Credit.HEALTHY) t.warn else t.ink)
+                        Spacer(Modifier.width(12.dp))
+                    }
+                    Text(rupees(m.outstandingPaise), style = MaterialTheme.typography.bodySmall, color = t.ink2)
+                }
+            }
+            if (h.sharedLimit) Text(
+                "Split by what each card spent in the last 60 days.",
+                style = MaterialTheme.typography.bodySmall, color = t.ink3, modifier = Modifier.padding(top = 2.dp, bottom = 4.dp),
+            )
+        }
+    }
+}
+
+/**
+ * "Group cards that share a statement?": one compact panel, a row per bank. Cards whose limit SMS run as one balance
+ * are named as very likely shared. "No" stops asking for that bank (it can be turned back on from More).
+ */
+@Composable
+internal fun CardGroupSuggestions(
+    suggestions: List<CardGroup>,
+    likely: Map<String, List<Source>>,
+    onGroup: (CardGroup) -> Unit,
+    onNo: (String) -> Unit,
+) {
+    val t = LocalTones.current
+    Panel(padding = PaddingValues(start = 18.dp, end = 18.dp, top = 18.dp, bottom = 10.dp)) {
+        PanelHeader("Cards on one statement?", "suggestion")
+        Text(
+            "Group cards that share a limit (an add-on card, or two cards on one account) to see the real usage once.",
+            style = MaterialTheme.typography.bodySmall, color = t.ink2,
+        )
+        suggestions.forEach { g ->
+            val shared = likely[g.bank]
+            Gap(8.dp)
+            Hairline()
+            Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("${g.bank} ${g.cards.joinToString(" · ") { it.last4 }}", style = MaterialTheme.typography.titleSmall, color = t.ink)
+                    Text(
+                        if (shared != null) "${shared.joinToString(" & ") { it.last4 }} look like one shared limit" else "Same bank",
+                        style = MaterialTheme.typography.bodySmall, color = if (shared != null) t.accent else t.ink3,
+                    )
+                }
+                TextButton(onClick = { onNo(g.bank) }) { Text("No", color = t.ink2) }
+                TextButton(onClick = { onGroup(if (shared != null) g.copy(cards = shared) else g) }) { Text("Group", color = t.accent) }
+            }
+        }
+    }
+}
+
+/**
+ * Card SMS without a card number: the owner says which card each was. Unanswered ones wait here. Tap a payment to
+ * read its SMS; "always" remembers the card for that shop.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+internal fun WhichCardPanel(rows: List<Row>, cardsOf: (String) -> List<Source>, onPick: (Row, Source, Boolean) -> Unit) {
+    val t = LocalTones.current
+    var all by remember { mutableStateOf(false) }
+    var reading by remember { mutableStateOf<Row?>(null) }
+    val always = remember { mutableStateMapOf<Long, Boolean>() }
+    Panel {
+        PanelHeader("Which card was it?", "${rows.size} to sort")
+        Text(
+            "These SMS didn't say which card. Until you pick one, they stay under “not assigned”.",
+            style = MaterialTheme.typography.bodySmall, color = t.ink2,
+        )
+        (if (all) rows else rows.take(3)).forEach { r ->
+            Gap(10.dp)
+            Hairline()
+            Gap(10.dp)
+            val tx = r.txn
+            val refund = tx.parsed.direction == Direction.CREDIT
+            val shop = tx.parsed.counterparty?.takeIf { it.isNotBlank() }
+            Row(Modifier.fillMaxWidth().clickable { reading = if (reading == r) null else r }, verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(shop ?: if (refund) "Refund" else "Card spend", style = MaterialTheme.typography.titleSmall, color = t.ink)
+                    Text("${tx.parsed.source.bank} · ${if (refund) "refund" else "spend"} · ${tx.day.format(dm)} · ${if (reading == r) "hide SMS" else "see SMS"}", style = MaterialTheme.typography.bodySmall, color = t.ink2)
+                }
+                Text((if (refund) "+" else "") + rupeesExact(tx.amountPaise), style = AmountStyle, color = if (refund) t.accent else t.ink)
+            }
+            AnimatedVisibility(reading == r && r.rawBody != null, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
+                Text(
+                    r.rawBody.orEmpty(), style = MaterialTheme.typography.bodySmall, color = t.ink2,
+                    modifier = Modifier.padding(top = 6.dp).fillMaxWidth().background(t.raised, RoundedCornerShape(8.dp)).padding(10.dp),
+                )
+            }
+            Gap(6.dp)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                cardsOf(tx.parsed.source.bank).forEach { c ->
+                    FilterChip(false, { onPick(r, c, always[r.smsId] == true) }, { Text("Card ${c.last4}") }, colors = chipColors(), border = chipBorder(false))
+                }
+                if (shop != null && r.smsId != null) {
+                    val on = always[r.smsId] == true
+                    FilterChip(on, { always[r.smsId] = !on }, { Text("Always for $shop") }, colors = chipColors(), border = chipBorder(on))
+                }
+            }
+        }
+        if (rows.size > 3) TextButton(onClick = { all = !all }, contentPadding = PaddingValues(0.dp)) {
+            Text(if (all) "Show fewer" else "Show all ${rows.size}", color = t.accent)
+        }
+    }
+}
+
 
 @Composable
 private fun UtilisationBar(u: Double) {
@@ -183,29 +338,119 @@ private fun UtilisationBar(u: Double) {
     }
 }
 
+/** What the card settings sheet saves. [cards] has 2+ cards when they are to be grouped, else just the one card. */
+internal data class CardSettings(
+    val cards: List<Source>,
+    /** The group's own name; blank = "ICICI cards". */
+    val name: String,
+    val sharedLimit: Boolean,
+    val limitPaise: Long?,
+    val statementDay: Int?,
+    /** Each card's own limit, used for a group whose limits are not shared. */
+    val cardLimits: Map<Source, Long?>,
+)
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun CardSettingsSheet(h: CardHealth, onDismiss: () -> Unit, onSave: (limitPaise: Long?, statementDay: Int?) -> Unit) {
+internal fun CardSettingsSheet(
+    h: CardHealth,
+    /** Every tracked card of the same bank (this card, or the group's cards, included). */
+    sameBank: List<Source>,
+    /** Limits the owner set per card, for a group with separate limits. */
+    ownLimits: Map<Source, Long>,
+    /** The group's own name, if the owner gave one. */
+    groupName: String? = null,
+    /** Cards to start with ticked (from the "group your cards?" suggestion). */
+    preselect: List<Source>? = null,
+    onDismiss: () -> Unit,
+    onSave: (CardSettings) -> Unit,
+) {
     val t = LocalTones.current
-    var limit by remember { mutableStateOf(if (h.limitEstimated) "" else rupeesField(h.limitPaise)) }
-    var day by remember { mutableStateOf(h.nextStatement?.dayOfMonth?.toString().orEmpty()) }
+    val inGroup = preselect ?: if (h.isGroup) h.members.map { it.card } else listOf(h.card)
+    var name by remember { mutableStateOf(groupName.orEmpty()) }
+    val chosen = remember { mutableStateListOf<Source>().apply { addAll(inGroup) } }
+    var shared by remember { mutableStateOf(h.sharedLimit) }
+    var limit by remember { mutableStateOf(if (h.limitEstimated || (h.isGroup && !h.sharedLimit)) "" else rupeesField(h.limitPaise)) }
+    var day by remember { mutableStateOf(h.nextStatement?.dayOfMonth) }
+    val perCard = remember { mutableStateMapOf<Source, String>().apply { sameBank.forEach { c -> put(c, ownLimits[c]?.let(::rupeesField).orEmpty()) } } }
+    val grouping = chosen.size >= 2
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = t.panel) {
-        Column(Modifier.padding(start = 20.dp, end = 20.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(sourceLabel(h.card), style = MaterialTheme.typography.headlineSmall, color = t.ink)
-            OutlinedTextField(
-                limit, { limit = it.filter { c -> c.isDigit() } }, label = { Text("Credit limit in ₹") }, singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), colors = fieldColors(), shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.fillMaxWidth(),
-                supportingText = {
-                    Text(if (h.limitEstimated && h.limitPaise != null) "Estimated ${rupees(h.limitPaise)} from your SMS. Leave empty to keep the estimate." else "Shown in your card app or statement.")
+        Column(
+            Modifier.padding(start = 20.dp, end = 20.dp, bottom = 32.dp).verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(if (grouping) name.ifBlank { "${h.card.bank} cards" } else sourceLabel(chosen.firstOrNull() ?: h.card), style = MaterialTheme.typography.headlineSmall, color = t.ink)
+            if (sameBank.size >= 2) {
+                Text("Cards on one statement", style = MaterialTheme.typography.titleSmall, color = t.ink)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    sameBank.forEach { c ->
+                        val on = c in chosen
+                        FilterChip(on, { if (on) chosen.remove(c) else chosen.add(c) }, { Text("${c.bank} ${c.last4}") }, colors = chipColors(), border = chipBorder(on))
+                    }
+                }
+                Text(
+                    if (grouping) "Shown together as one card, with each card inside it." else "Pick 2 or more to group cards that share a statement.",
+                    style = MaterialTheme.typography.bodySmall, color = t.ink2,
+                )
+            }
+            if (grouping) {
+                OutlinedTextField(
+                    name, { name = it.take(30) }, label = { Text("Group name (optional)") }, singleLine = true,
+                    colors = fieldColors(), shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth(),
+                    supportingText = { Text("Like \"Mine\" or \"Brother's\". Empty shows \"${h.card.bank} cards\".") },
+                )
+                Row(Modifier.fillMaxWidth().clickable { shared = !shared }, verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("One shared limit", style = MaterialTheme.typography.titleSmall, color = t.ink)
+                        Text(
+                            if (shared) "The cards draw from the same limit." else "Each card has its own limit; the group adds them up.",
+                            style = MaterialTheme.typography.bodySmall, color = t.ink2,
+                        )
+                    }
+                    Switch(
+                        shared, { shared = it },
+                        colors = SwitchDefaults.colors(checkedTrackColor = t.accent, checkedThumbColor = androidx.compose.ui.graphics.Color.White, uncheckedTrackColor = t.section, uncheckedBorderColor = t.edge),
+                    )
+                }
+            }
+            if (!grouping || shared) {
+                OutlinedTextField(
+                    limit, { limit = it.filter { c -> c.isDigit() } }, label = { Text(if (grouping) "Shared credit limit in ₹" else "Credit limit in ₹") }, singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), colors = fieldColors(), shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    supportingText = {
+                        Text(if (h.limitEstimated && h.limitPaise != null && inGroup.toSet() == chosen.toSet()) "Estimated ${rupees(h.limitPaise)} from your SMS. Leave empty to keep the estimate." else "Shown in your card app or statement.")
+                    },
+                )
+            } else {
+                sameBank.filter { it in chosen }.forEach { c ->
+                    OutlinedTextField(
+                        perCard[c].orEmpty(), { v -> perCard[c] = v.filter { ch -> ch.isDigit() } }, label = { Text("Card ${c.last4} limit in ₹") }, singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), colors = fieldColors(), shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+            DayOfMonthField(
+                "Statement day", day, { day = it },
+                "Pick the day your statement is made, e.g. 12 = the 12th of every month. The bank reports your balance to the credit bureaus then.",
+            )
+            PrimaryButton(
+                if (h.isGroup && !grouping) "Ungroup" else "Save",
+                {
+                    onSave(
+                        CardSettings(
+                            cards = sameBank.filter { it in chosen }.ifEmpty { listOf(h.card) },
+                            name = name.trim(),
+                            sharedLimit = shared,
+                            limitPaise = parseRupees(limit)?.takeIf { it > 0 },
+                            statementDay = day,
+                            cardLimits = sameBank.filter { it in chosen }.associateWith { c -> parseRupees(perCard[c].orEmpty())?.takeIf { it > 0 } },
+                        ),
+                    )
                 },
+                enabled = chosen.isNotEmpty(),
             )
-            OutlinedTextField(
-                day, { day = it.filter { c -> c.isDigit() }.take(2) }, label = { Text("Statement day (1–31)") }, singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), colors = fieldColors(), shape = RoundedCornerShape(10.dp),
-                modifier = Modifier.fillMaxWidth(),
-                supportingText = { Text("The bank reports your balance to the credit bureaus on this day.") },
-            )
-            PrimaryButton("Save", { onSave(parseRupees(limit)?.takeIf { it > 0 }, day.toIntOrNull()?.takeIf { it in 1..31 }) })
         }
     }
 }

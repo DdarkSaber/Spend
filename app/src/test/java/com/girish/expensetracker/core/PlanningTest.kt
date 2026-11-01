@@ -94,6 +94,39 @@ class CreditHealthTest {
         assertEquals(0L, Credit.health(SBI_CC, listOf(upi), listOf(stmt), emptyList(), null, null, LocalDate.of(2026, 10, 19)).billLeftPaise)
     }
 
+    @Test fun markedPaidClearsTheBillWithoutCountingALateSmsTwice() {
+        val stmt = CardStatement("SBI", "52", LocalDate.of(2026, 10, 1), 12_450_00L, 970_00L, LocalDate.of(2026, 10, 21))
+        val mark = MarkedPaid(LocalDate.of(2026, 10, 1), 12_450_00L, at("2026-10-16"))
+        val h = Credit.health(SBI_CC, emptyList(), listOf(stmt), emptyList(), null, null, LocalDate.of(2026, 10, 19), marked = mark)
+        assertEquals(0L, h.billLeftPaise)
+        assertEquals(0L, h.outstandingPaise)
+        assertTrue(h.markedPaid)
+        assertTrue(Alerts.credit(listOf(h), LocalDate.of(2026, 10, 19), { it.bank }, { "₹${it / 100}" }, { it.toString() }).isEmpty())
+        // The payment SMS turns up after all: still paid once.
+        val pay = sms("VM-SBICRD-S", "Dear SBI Cardholder, payment of Rs. 12450.00 for your SBI Credit Card has been successfully processed. ref no : ABC123XYZ.", at("2026-10-15"))
+        val late = Credit.health(SBI_CC, listOf(pay), listOf(stmt), emptyList(), null, null, LocalDate.of(2026, 10, 19), marked = mark)
+        assertEquals(0L, late.billLeftPaise)
+        assertEquals(0L, late.outstandingPaise)
+        // A mark for an older statement does nothing for a new one.
+        val next = stmt.copy(statementDate = LocalDate.of(2026, 11, 1), dueDate = LocalDate.of(2026, 11, 21))
+        assertEquals(12_450_00L, Credit.health(SBI_CC, emptyList(), listOf(next), emptyList(), null, null, LocalDate.of(2026, 11, 5), marked = mark).billLeftPaise)
+    }
+
+    @Test fun prepaymentFromABankAccountLowersTheBalance() {
+        val me = ME.copy(accounts = setOf(Source("SBI", "5678", SourceType.ACCOUNT)))
+        val upi = Classifier.classify(
+            (SmsReader.read("JD-SBIUPI-S", "Dear UPI user A/C X5678 debited by 5000.00 on date 25Oct26 trf to SBI Cards and Pa Refno 600000000010", me) as ReadResult.Parsed).parsed,
+            at("2026-10-25"), me,
+        )
+        val stmt = CardStatement("SBI", "52", LocalDate.of(2026, 10, 1), 12_450_00L, 970_00L, LocalDate.of(2026, 10, 21))
+        val seen = listOf(LimitSeen("SBI", "1152", 60_000_00L, at("2026-10-20")))
+        // Before the next statement (1 Nov) the owner prepays 5,000 by UPI: the balance the bank will report drops.
+        val h = Credit.health(SBI_CC, listOf(upi), listOf(stmt), seen, 1_00_000_00L, null, LocalDate.of(2026, 10, 26), accountPaysHere = true)
+        assertEquals(35_000_00L, h.outstandingPaise) // 1,00,000 - 60,000 - 5,000
+        // With two SBI cards the app can't tell which one it paid, so the balance waits for the next limit SMS.
+        assertEquals(40_000_00L, Credit.health(SBI_CC, listOf(upi), listOf(stmt), seen, 1_00_000_00L, null, LocalDate.of(2026, 10, 26)).outstandingPaise)
+    }
+
     @Test fun reminderThreeDaysBeforeAndOnTheDay() {
         val stmt = CardStatement("ICICI", "9999", LocalDate.of(2026, 10, 3), 2_762_84L, 140_00L, LocalDate.of(2026, 10, 21))
         fun on(d: Int) = Alerts.credit(
@@ -110,6 +143,104 @@ class CreditHealthTest {
         val a = Alerts.credit(listOf(h), LocalDate.of(2026, 10, 20), { "HDFC card ${it.last4}" }, { "₹${it / 100}" }, { "5 Nov" }).single()
         assertEquals("HDFC card 4321 is at 34% of its limit", a.title)
         assertTrue(a.text, a.text.startsWith("Pay ₹4000 before 5 Nov"))
+    }
+}
+
+class CardGroupTest {
+
+    private val icici2 = Source("ICICI", "1111", SourceType.CARD)
+    private val me = ME.copy(cards = ME.cards + icici2)
+
+    private fun spend(card: String, rs: Int, avl: Int, day: String): Txn {
+        val r = SmsReader.read("AD-ICICIT-S", "INR $rs.00 spent using ICICI Bank Card XX$card on $day on AMAZON. Avl Limit: INR $avl.00.", me)
+        assertTrue("expected Parsed but got $r", r is ReadResult.Parsed)
+        // Received before the limit SMS below, so only the "available limit" decides the balance.
+        return Classifier.classify((r as ReadResult.Parsed).parsed, at("2026-10-01"), me)
+    }
+
+    @Test fun sharedLimitCountsOnceAndCardsSplitTheBalance() {
+        // One ₹1,00,000 limit for both cards; the latest SMS (from card 1111) says ₹70,000 is left.
+        val txns = listOf(spend("9999", 20000, 80000, "05-Oct-26"), spend("1111", 10000, 70000, "08-Oct-26"))
+        val seen = listOf(
+            LimitSeen("ICICI", "9999", 80_000_00L, at("2026-10-05")),
+            LimitSeen("ICICI", "1111", 70_000_00L, at("2026-10-08")),
+        )
+        val h = Credit.groupHealth(CardGroup("ICICI", listOf(ICICI_CC, icici2)), txns, emptyList(), seen, 100_000_00L, 3, emptyMap(), LocalDate.of(2026, 10, 15))
+        assertTrue(h.isGroup)
+        assertEquals(100_000_00L, h.limitPaise) // one limit, not two added up
+        assertEquals(30_000_00L, h.outstandingPaise)
+        assertEquals(0.30, h.utilization!!, 1e-9)
+        assertEquals(listOf(20_000_00L, 10_000_00L), h.members.map { it.outstandingPaise })
+        assertEquals(0.20, h.members[0].utilization!!, 1e-9)
+        assertEquals(LocalDate.of(2026, 11, 3), h.nextStatement)
+        assertEquals(CardGroup.DIGITS, h.card.last4)
+    }
+
+    @Test fun separateLimitsAddUp() {
+        val txns = listOf(spend("9999", 20000, 80000, "05-Oct-26"), spend("1111", 10000, 40000, "08-Oct-26"))
+        val seen = listOf(
+            LimitSeen("ICICI", "9999", 80_000_00L, at("2026-10-05")),
+            LimitSeen("ICICI", "1111", 40_000_00L, at("2026-10-08")),
+        )
+        val limits = mapOf(ICICI_CC to 100_000_00L, icici2 to 50_000_00L)
+        val h = Credit.groupHealth(CardGroup("ICICI", listOf(ICICI_CC, icici2), sharedLimit = false), txns, emptyList(), seen, null, null, limits, LocalDate.of(2026, 10, 15))
+        assertEquals(150_000_00L, h.limitPaise)
+        assertEquals(30_000_00L, h.outstandingPaise) // 20,000 + 10,000
+        assertEquals(0.20, h.members[1].utilization!!, 1e-9)
+        assertFalse(h.sharedLimit)
+    }
+
+    @Test fun cardSmsWithoutNumberIsKnownAndCountsForTheWholeBankGroup() {
+        val r = SmsReader.read("VA-ICICIT-S", "INR 2,000.00 spent on ICICI Bank Credit Card at AMAZON on 12-Oct-26. Avl Limit: INR 68,000.00", me)
+        // With two ICICI cards the reader can't pick one: the spend is the owner's, on card "?".
+        assertTrue("expected Parsed but got $r", r is ReadResult.Parsed)
+        run {
+            r as ReadResult.Parsed
+            assertEquals(UNASSIGNED, r.parsed.source.last4)
+            val t = Classifier.classify(r.parsed, at("2026-10-12", 13), me)
+            val seen = listOf(LimitSeen("ICICI", "9999", 70_000_00L, at("2026-10-10")))
+            val g = CardGroup("ICICI", listOf(ICICI_CC, icici2))
+            val whole = Credit.groupHealth(g, listOf(t), emptyList(), seen, 100_000_00L, null, emptyMap(), LocalDate.of(2026, 10, 15), unassigned = true)
+            assertEquals(32_000_00L, whole.outstandingPaise) // 1,00,000 - 70,000 + 2,000
+            val notMine = Credit.groupHealth(g, listOf(t), emptyList(), seen, 100_000_00L, null, emptyMap(), LocalDate.of(2026, 10, 15))
+            assertEquals(30_000_00L, notMine.outstandingPaise)
+        }
+        assertTrue(me.isKnown(Source("ICICI", UNASSIGNED, SourceType.CARD)))
+        assertFalse(me.isKnown(Source("AXIS", UNASSIGNED, SourceType.CARD)))
+    }
+
+    @Test fun twoGroupsAtOneBankKeepTheirOwnLimits() {
+        val c3 = Source("ICICI", "3333", SourceType.CARD)
+        val c4 = Source("ICICI", "4444", SourceType.CARD)
+        val seen = listOf(
+            LimitSeen("ICICI", "9999", 80_000_00L, at("2026-10-05")),
+            LimitSeen("ICICI", "4444", 45_000_00L, at("2026-10-06")),
+        )
+        val a = Credit.groupHealth(CardGroup("ICICI", listOf(ICICI_CC, icici2)), emptyList(), emptyList(), seen, 100_000_00L, null, emptyMap(), LocalDate.of(2026, 10, 15))
+        val b = Credit.groupHealth(CardGroup("ICICI", listOf(c3, c4), id = "group1"), emptyList(), emptyList(), seen, 50_000_00L, null, emptyMap(), LocalDate.of(2026, 10, 15))
+        assertEquals(20_000_00L, a.outstandingPaise)
+        assertEquals(5_000_00L, b.outstandingPaise)
+        assertEquals("group1", b.card.last4)
+        assertTrue(CardGroup.isGroup(b.card))
+    }
+
+    @Test fun limitSmsRunningAsOneBalanceLookShared() {
+        // Card 9999 leaves 80,000; then 1111 spends 10,000 and its SMS says 70,000 left: one balance.
+        val spend = Classifier.classify(
+            (SmsReader.read("AD-ICICIT-S", "INR 10000.00 spent using ICICI Bank Card XX1111 on 08-Oct-26 on AMAZON. Avl Limit: INR 70000.00.", me) as ReadResult.Parsed).parsed,
+            at("2026-10-08"), me,
+        )
+        val shared = listOf(LimitSeen("ICICI", "9999", 80_000_00L, at("2026-10-05")), LimitSeen("ICICI", "1111", 70_000_00L, at("2026-10-08")))
+        assertTrue(Credit.looksShared(ICICI_CC, icici2, shared, listOf(spend)))
+        // Own limits: 1111's SMS has nothing to do with 9999's balance.
+        val separate = listOf(LimitSeen("ICICI", "9999", 80_000_00L, at("2026-10-05")), LimitSeen("ICICI", "1111", 40_000_00L, at("2026-10-08")))
+        assertFalse(Credit.looksShared(ICICI_CC, icici2, separate, listOf(spend)))
+    }
+
+    @Test fun noSpendSplitsEvenly() {
+        val seen = listOf(LimitSeen("ICICI", "9999", 90_000_00L, at("2026-10-05")))
+        val h = Credit.groupHealth(CardGroup("ICICI", listOf(ICICI_CC, icici2)), emptyList(), emptyList(), seen, 100_000_00L, null, emptyMap(), LocalDate.of(2026, 10, 15))
+        assertEquals(listOf(5_000_00L, 5_000_00L), h.members.map { it.outstandingPaise })
     }
 }
 
