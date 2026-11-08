@@ -143,7 +143,9 @@ class PayeeRules(private val rules: Map<String, Rule>) {
 /** Merchant-or-person guess from the payee name alone, plus a category guess. */
 object PayeeGuess {
 
-    private val companyWords = listOf("PVT", "PRIVATE", "LTD", "LIMITED", "TECHNOLOGIES", "TECHNO", "CORP", "CORPORATION", "LLP", "INDIA", "SERVICES", "ENTERPRISES")
+    private val companyWords = listOf("PVT", "PRIVATE", "LTD", "LIMITED", "TECHNOLOGIES", "TECHNO", "CORP", "CORPORATION", "LLP", "INDIA", "SERVICES", "ENTERPRISES",
+        // Shops that name themselves by trade rather than goods.
+        "AGENCY", "AGENCIES", "INDUSTRIES", "TRADERS", "TRADING", "CO", "COUNTER", "SHOP", "BANK", "SOLAR", "POWER", "DOTPE")
 
     // keyword -> category; first match wins, so brands come before generic words.
     // Words of 5+ letters match inside a name ("ETERNALLIMITED"); shorter ones must be whole words ("TEA" not "TEAM").
@@ -154,12 +156,12 @@ object PayeeGuess {
         group("Food", "SWIGGY", "ZOMATO", "ETERNAL", "DOMINO", "DOMINOS", "PIZZA HUT", "PIZZA", "MCDONALD", "KFC", "BURGER KING",
             "SUBWAY", "STARBUCKS", "CHAAYOS", "THIRD WAVE", "BLUE TOKAI", "HALDIRAM", "BEHROUZ", "FAASOS", "BOX8", "EATSURE",
             "REBEL FOODS", "WOW MOMO", "THEOBROMA", "CAFE COFFEE DAY", "CCD", "BASKIN", "KRISPY", "NATURALS ICE", "THICKSHAKE",
-            "EATFIT", "LICIOUS", "FRESHMENU", "MAGICPIN", "EAZYDINER", "DINEOUT") +
+            "EATFIT", "LICIOUS", "FRESHMENU", "MAGICPIN", "EAZYDINER", "DINEOUT", "HUNGERBOX", "ISTHARA", "ADYAR ANANDA", "A2B") +
         // --- quick commerce & grocery
         group("Groceries", "BLINKIT", "GROFERS", "ZEPTO", "KIRANAKART", "INSTAMART", "BIGBASKET", "BB DAILY", "DMART", "AVENUE SUPERMARTS",
             "MORE RETAIL", "RELIANCE FRESH", "RELIANCE SMART", "SMART BAZAAR", "JIOMART", "NATURES BASKET", "RATNADEEP", "SPENCERS",
             "STAR BAZAAR", "COUNTRY DELIGHT", "AKSHAYAKALPA", "NANDINI MILK", "NANDINI PARLOUR", "HERITAGE FOODS", "MILKBASKET", "MUNCHMART", "SWISH",
-            "SUPERMARKET", "SUPER MARKET", "SUPER MARKE", "SUPERMART", "PROVISION", "KIRANA", "DAIRY", "VEGETABLE") +
+            "SUPERMARKET", "SUPER MARKET", "SUPER MARKE", "SUPERMART", "PROVISION", "KIRANA", "DAIRY", "VEGETABLE", "HOME NEEDS") +
         // --- getting around
         group("Transport", "UBER", "OLA", "RAPIDO", "NAMMA YATRI", "BLUSMART", "BMRCL", "METRO", "BMTC", "IRCTC", "REDBUS", "ABHIBUS",
             "YULU", "BOUNCE", "FASTAG", "PARKING", "TOLL", "BIAL") +
@@ -173,11 +175,12 @@ object PayeeGuess {
             "CHEMIST", "DRUG", "HOSPITAL", "NARAYANA HEALTH", "NARAYANA HRUDAYALAYA", "MANIPAL HOSP", "FORTIS HEALTH", "ASTER CMI", "ASTER DM",
             "CLOUDNINE", "MOTHERHOOD HOSP", "SAKRA WORLD", "PRACTO",
             "THYROCARE", "DR LAL", "LAL PATH", "METROPOLIS", "HEALTHIANS", "PATHOLOGY", "LABS", "CLINIC", "DIAGNOSTIC", "DENTAL",
-            "MEDICAL", "FERTILITY", "HEALTHCARE", "PHYSIO", "CULTFIT", "CULT.FIT") +
-        group("Personal care", "SALON", "SPA", "NATURALS", "TONI&GUY", "BARBER", "GROOMING", "UNISEX") +
+            "MEDICAL", "FERTILITY", "HEALTHCARE", "PHYSIO", "CULTFIT", "CULT.FIT", "CROSSFIT", "FITNESS", "GYM") +
+        group("Personal care", "SALON", "SPA", "NATURALS", "TONI&GUY", "BARBER", "GROOMING", "UNISEX", "SKIN", "HAIR") +
         // --- fun & subscriptions
         group("Entertainment", "BOOKMYSHOW", "BOOK MY SHOW", "PVR", "INOX", "CINEPOLIS", "DISTRICT", "PAYTM INSIDER", "HOYOVERSE",
-            "STEAM", "PLAYSTATION", "XBOX", "NINTENDO", "EPIC GAMES", "RIOT", "VALVE", "GAMES") +
+            "STEAM", "PLAYSTATION", "XBOX", "NINTENDO", "EPIC GAMES", "RIOT", "VALVE", "GAMES", "THEATRES", "THEATRE", "THEATER", "CINEMAS",
+            "CINEMA", "ENTERTAINMENT", "BIGTREE", "BIG TREE") +
         group("Subscriptions", "NETFLIX", "SPOTIFY", "YOUTUBE", "GOOGLE PLAY", "GOOGLEPLAY", "GOOGLE", "APPLE.COM", "ICLOUD", "PRIME VIDEO",
             "JIOHOTSTAR", "HOTSTAR", "DISNEY", "SONYLIV", "ZEE5", "AHA", "OPENAI", "CHATGPT", "ANTHROPIC", "CLAUDE", "NOTION",
             "MICROSOFT", "ADOBE", "PATREON", "LINKEDIN") +
@@ -193,12 +196,12 @@ object PayeeGuess {
         group("Shopping", "AMAZON", "FLIPKART", "MYNTRA", "AJIO", "NYKAA", "MEESHO", "TATA CLIQ", "CROMA", "RELIANCE DIGITAL", "VIJAY SALES",
             "DECATHLON", "IKEA", "UNIQLO", "H&M", "ZARA", "WESTSIDE", "PANTALOONS", "LIFESTYLE", "MAX FASHION", "TRENDS", "RARE RABBIT",
             "HOUSE OF RARE", "SNITCH", "BEWAKOOF", "TITAN", "TANISHQ", "APPLE INDIA", "SAMSUNG", "ONEPLUS", "BOAT", "PUMA",
-            "NIKE", "ADIDAS", "MIDAS", "DIGITAL") +
+            "NIKE", "ADIDAS", "MIDAS", "DIGITAL", "HENNES", "MALL", "RETAIL", "ELECTRONICS", "COMPUTERS", "JEWELLERS", "JEWELLERY", "AURAGOLD") +
         // --- generic food words last (after brands like OYO / hotels in Travel)
         group("Food", "RESTAURANT", "HOTEL", "DHABA", "BAKERY", "BAKE", "BREAD", "CAFE", "KITCHEN", "FOODS", "FOOD", "SWEETS", "JUICE",
             "FRUIT", "TEA", "COFFEE", "CHAI", "MESS", "CANTEEN", "EATERY", "GRILL", "BISTRO", "BREW", "BAR", "PUB", "MOMO", "MOMOS",
             "DOSA", "TIFFIN", "BHAVAN", "DARSHINI", "BIRYANI", "BBQ", "BARBEQUE", "PALACE", "SZECHUAN", "DRAGON", "CHINESE",
-            "PIZZERIA", "BURGER", "SHAKE", "ICE CREAM", "CREAMERY") +
+            "PIZZERIA", "BURGER", "SHAKE", "ICE CREAM", "CREAMERY", "CATERING", "CATERERS", "CATRING", "BHAWAN") +
         group("Groceries", "STORES", "STORE", "MART", "SUPER", "FRESH")
 
     private val honorific = Regex("^(MR|MRS|MS|DR|SMT|SHRI)\\.?\\s", RegexOption.IGNORE_CASE)
@@ -215,10 +218,26 @@ object PayeeGuess {
         Regex(pattern) to cat
     }
 
+    // Whole payee names that are brands but too short to match as words.
+    private val exactNames = mapOf("VI" to "Bills", "A2B" to "Food")
+
     fun category(name: String): String? {
         val upper = name.uppercase()
-        return categoryMatchers.firstOrNull { (re, _) -> re.containsMatchIn(upper) }?.second
+        exactNames[upper.trim()]?.let { return it }
+        categoryMatchers.firstOrNull { (re, _) -> re.containsMatchIn(upper) }?.let { return it.second }
+        val tail = cutTail(upper) ?: return null
+        return categoryWords.firstOrNull { (word, _) -> completes(tail, word) }?.second
     }
+
+    // Banks cut payee names at about 15 letters ("ZEESHAN RESTAURA", "SRI SAKTHI AGENC", "CHALLENGER COMPU"). In a name
+    // that long, a last word of 4+ letters that starts a known single-word keyword counts as that keyword.
+    private fun cutTail(upper: String): String? {
+        if (upper.trim().length < 14) return null
+        val last = upper.trim().split(Regex("[\\s.]+")).lastOrNull { it.isNotBlank() } ?: return null
+        return last.takeIf { it.length >= 4 && it.all(Char::isLetter) }
+    }
+
+    private fun completes(tail: String, word: String) = ' ' !in word && word.length > tail.length && word.startsWith(tail)
 
     fun type(name: String): PayeeType {
         val upper = name.uppercase().trim()
@@ -234,7 +253,12 @@ object PayeeGuess {
     fun isMerchantLike(name: String): Boolean {
         val upper = name.uppercase().trim()
         if (upper.isEmpty() || honorific.containsMatchIn(upper)) return false
+        // Bank SMS that print a link or an unfilled template ("{PAYEENAME}") instead of a name are not a person.
+        if (upper.startsWith("HTTP") || '{' in upper) return true
         if (category(upper) != null) return true
+        // Long company words inside a run-together name ("INDIANCLEARINGCORPORATION").
+        if (companyWords.any { it.length >= 8 && it in upper }) return true
+        cutTail(upper)?.let { tail -> if (companyWords.any { completes(tail, it) }) return true }
         if (upper.startsWith("THE ") || " & " in upper) return true
         val words = upper.split(Regex("[\\s.]+")).filter { it.isNotBlank() }
         if (words.any { w -> w in companyWords || companyPrefixes.any { w.startsWith(it) } }) return true
