@@ -34,8 +34,8 @@ android {
         applicationId = "com.girish.expensetracker"
         minSdk = 31
         targetSdk = 36
-        versionCode = 14
-        versionName = "1.2.6"
+        versionCode = 15
+        versionName = "1.2.7"
     }
 
     signingConfigs {
