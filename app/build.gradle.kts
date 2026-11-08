@@ -95,5 +95,7 @@ tasks.withType<Test>().configureEach {
     systemProperty("corpus", System.getProperty("corpus") ?: "")
     systemProperty("golden", System.getProperty("golden") ?: "")
     systemProperty("samples", System.getProperty("samples") ?: "")
+    systemProperty("backup", System.getProperty("backup") ?: "")
+    systemProperty("txns", System.getProperty("txns") ?: "")
     testLogging { showStandardStreams = true }
 }
