@@ -75,6 +75,12 @@ object SmsReader {
     }
 
     /** The bank behind a DLT sender ("VM-AXISBK-S" -> "AXIS"), or null for anything that isn't a bank. */
+    /** The first DLT entity code of [bank] ("AXIS" -> "AXISBK"), for synthetic senders of notification alerts. */
+    fun codeFor(bank: String): String? = bankCodes.entries.firstOrNull { it.value == bank }?.key
+
+    /** Every bank the reader knows, by its short name. */
+    val banks: Set<String> get() = bankCodes.values.toSet()
+
     fun bankOf(sender: String): String? =
         dltHeader.matchEntire(sender.trim())?.groupValues?.get(1)?.uppercase()?.let { bankCodes[it] }
 
