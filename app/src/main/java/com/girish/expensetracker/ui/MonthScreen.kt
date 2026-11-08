@@ -60,6 +60,7 @@ internal fun MonthScreen(
     onBudgets: () -> Unit = {},
     onRent: (com.girish.expensetracker.core.RentCandidate, Boolean) -> Unit = { _, _ -> },
     onSalary: (java.time.LocalDate) -> Unit = {},
+    onShop: (String) -> Unit = {},
     onRow: (Row) -> Unit,
 ) {
     val t = LocalTones.current
@@ -69,6 +70,7 @@ internal fun MonthScreen(
     var openCat by remember { mutableStateOf<String?>(null) }
 
     // Calendar months, newest first, back to the first one with any payment. 0 is the running month.
+    val shops = remember(snap) { com.girish.expensetracker.core.Shops.all(snap.txns) }
     val months = remember(snap) {
         val first = snap.txns.minOfOrNull { it.day }
         Ledger.cyclesSince(snap.today, snap.txns, first).ifEmpty { listOf(snap.cycleStart..snap.today) }
@@ -97,7 +99,12 @@ internal fun MonthScreen(
         if (view == 0) {
             item { MonthSwitcher(range, running, canBack = monthIndex < months.lastIndex, onBack = { showMonth(monthIndex + 1) }, onNext = { showMonth(monthIndex - 1) }) }
             // The same summary for every month, salary included; the running month adds its budget and pace.
-            item { MonthSummary(report, running) }
+            item {
+                MonthSummary(report, running, onPlace = { name ->
+                    val key = com.girish.expensetracker.core.Shops.keyOf(snap.txns, name)
+                    if (shops.any { it.key == key }) onShop(key)
+                })
+            }
             item { MonthSalaries(snap, range, onSalary) }
             if (running) {
                 item { ForecastPanel(snap.forecast) }
@@ -155,6 +162,10 @@ internal fun MonthScreen(
                             }
                             AnimatedVisibility(openCat == cat, enter = expandVertically() + fadeIn(), exit = shrinkVertically() + fadeOut()) {
                                 Column(Modifier.padding(top = 6.dp)) {
+                                    // The category's biggest shops this month, each opening its shop screen.
+                                    shops.mapNotNull { s -> s.txns.filter { x -> x.category == cat && x.day in range }.sumOf(Ledger::monthAmount).takeIf { it > 0 }?.let { s to it } }
+                                        .sortedByDescending { it.second }.take(3)
+                                        .forEach { (s, v) -> ShopLink(s.name, v) { onShop(s.key) } }
                                     snap.rows.filter { it.txn.category == cat && it.txn.day in range && Ledger.monthAmount(it.txn) != 0L }
                                         .sortedByDescending { it.txn.receivedAt }
                                         .forEach { TxnRow(it, isNew(it), onRow, showDate = true) }
@@ -280,7 +291,7 @@ private fun MonthSwitcher(range: ClosedRange<java.time.LocalDate>, running: Bool
  * saved, per day, the biggest day and the number of payments. The running month says "left"; past months "saved".
  */
 @Composable
-private fun MonthSummary(r: com.girish.expensetracker.core.MonthReport, running: Boolean) {
+private fun MonthSummary(r: com.girish.expensetracker.core.MonthReport, running: Boolean, onPlace: (String) -> Unit = {}) {
     val t = LocalTones.current
     val diff = r.total - r.totalBefore
     val hasSalary = r.salaryPaise > 0
@@ -302,7 +313,7 @@ private fun MonthSummary(r: com.girish.expensetracker.core.MonthReport, running:
             PanelHeader("Where it went most")
             r.topPlaces.forEachIndexed { k, (name, amt) ->
                 if (k > 0) Hairline()
-                Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth().clickable { onPlace(name) }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("${k + 1}", style = DataLabel, color = t.ink3, modifier = Modifier.width(22.dp))
                     Text(name, style = MaterialTheme.typography.bodyMedium, color = t.ink, modifier = Modifier.weight(1f), maxLines = 1)
                     Text(rupees(amt), style = AmountStyle, color = t.ink)

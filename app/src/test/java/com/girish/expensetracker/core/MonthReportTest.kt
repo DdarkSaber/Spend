@@ -30,7 +30,7 @@ class MonthReportTest {
         assertEquals(4, r.payments)
         assertEquals(0.967, r.savingsRate!!, 0.001)
         assertEquals(LocalDate.of(2026, 9, 10) to 2_000_00L, r.biggestDay)
-        assertEquals(listOf("BLINKIT" to 2_000_00L, "SWIGGY" to 700_00L, "ZOMATO" to 600_00L), r.topPlaces)
+        assertEquals(listOf("Blinkit" to 2_000_00L, "Swiggy" to 700_00L, "Zomato" to 600_00L), r.topPlaces)
     }
 
     @Test fun runningMonthComparesTheSameDays() {

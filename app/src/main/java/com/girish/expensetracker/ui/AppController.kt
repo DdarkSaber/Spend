@@ -46,6 +46,7 @@ internal sealed interface Page {
     data object Sources : Page
     data class Person(val key: String) : Page
     data class SalaryPeriod(val start: java.time.LocalDate) : Page
+    data class Shop(val key: String) : Page
 }
 
 /**

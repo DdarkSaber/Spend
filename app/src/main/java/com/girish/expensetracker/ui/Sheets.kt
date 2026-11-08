@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -112,6 +113,7 @@ internal fun RowSheet(
     onRetag: (PayeeType, String, Boolean) -> Unit,
     onDeleteCash: (Long) -> Unit,
     onSplit: () -> Unit,
+    onShop: (() -> Unit)? = null,
     tag: String? = null,
     knownTags: List<String> = emptyList(),
     onTag: (String) -> Unit = {},
@@ -128,6 +130,12 @@ internal fun RowSheet(
         LazyColumn(contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
                 Text(x.parsed.counterparty ?: x.category, style = MaterialTheme.typography.headlineSmall, color = t.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                onShop?.let { open ->
+                    Text(
+                        "All payments at ${com.girish.expensetracker.core.Brands.canonical(x.parsed.counterparty.orEmpty())} ›", style = MaterialTheme.typography.labelLarge, color = t.accent,
+                        modifier = Modifier.clickable(onClick = open).padding(vertical = 4.dp),
+                    )
+                }
                 Text(rupeesExact(x.amountPaise), style = MaterialTheme.typography.displaySmall.copy(fontFeatureSettings = "tnum"), color = t.ink)
                 Text(
                     "${x.kind.name.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }} · ${sourceLabel(x.parsed.source)} · ${x.day.format(dayMonth)}, ${x.receivedAt.toLocalTime().withSecond(0).withNano(0)}",

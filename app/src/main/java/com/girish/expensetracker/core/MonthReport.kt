@@ -52,8 +52,12 @@ object MonthReports {
             biggestDay = counted.groupBy { it.day }.mapValues { (_, l) -> l.sumOf(Ledger::todayAmount) }.maxByOrNull { it.value }
                 ?.takeIf { it.value > 0 }?.toPair(),
             topPlaces = counted.filter { (it.kind == Kind.SPEND || it.kind == Kind.SUBSCRIPTION) && !it.parsed.counterparty.isNullOrBlank() }
-                .groupBy { normalizeName(it.parsed.counterparty!!) }
-                .map { (_, l) -> l.first().parsed.counterparty!! to l.sumOf(Ledger::monthAmount) }
+                // Shops by brand (ZOMATO / ETERNAL LIMITED are one place), people by name.
+                .groupBy { if (Shops.isShopPayment(it)) "S" + Brands.key(it.parsed.counterparty!!) else "P" + normalizeName(it.parsed.counterparty!!) }
+                .map { (_, l) ->
+                    val c = l.first().parsed.counterparty!!
+                    (if (Shops.isShopPayment(l.first())) Brands.canonical(c) else c) to l.sumOf(Ledger::monthAmount)
+                }
                 .sortedByDescending { it.second }.take(3),
         )
     }

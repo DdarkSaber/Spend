@@ -44,6 +44,7 @@ internal fun SheetHost(ctl: AppController, snap: Snapshot, pickers: Pickers) {
                 },
                 onDeleteCash = { id -> ctl.act { store.deleteManual(id); "Cash entry deleted" } },
                 onSplit = { ctl.sheet = Sheet.Split(row) },
+                onShop = if (com.girish.expensetracker.core.Shops.isShopPayment(row.txn)) ({ ctl.sheet = null; ctl.page = Page.Shop(com.girish.expensetracker.core.Shops.keyOf(snap.txns, row.txn.parsed.counterparty!!)) }) else null,
                 tag = snap.tagOf(row), knownTags = (snap.tags.values + snap.trips.map { it.name }).distinct().sorted(),
                 onTag = { tag -> ctl.act(closeSheet = false) { setTag(row, tag); if (tag.isBlank()) "Tag removed" else "Tagged “${tag.trim()}”" } },
             )
