@@ -76,6 +76,17 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, STOR
         db.execSQL("CREATE TABLE IF NOT EXISTS notif_seen (hash TEXT PRIMARY KEY, at INTEGER NOT NULL)")
     }
 
+    /** Runs [block] in one database transaction (many inserts at once are far faster this way). */
+    fun <T> inTransaction(block: () -> T): T {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            return block().also { db.setTransactionSuccessful() }
+        } finally {
+            db.endTransaction()
+        }
+    }
+
     /** Bumped whenever SMS ids may have changed meaning (a restore), so in-memory caches start over. */
     @Volatile var generation = 0
         private set

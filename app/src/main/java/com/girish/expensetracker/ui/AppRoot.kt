@@ -36,7 +36,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.girish.expensetracker.BuildConfig
 import com.girish.expensetracker.SpendApp
-import com.girish.expensetracker.UserConfig
 import com.girish.expensetracker.core.Ledger
 import com.girish.expensetracker.core.PayeeType
 import com.girish.expensetracker.data.Row
@@ -109,8 +108,9 @@ fun AppRoot(
     // First run: once SMS permission is granted and nothing is stored yet, import recent history automatically.
     LaunchedEffect(setup.sms) {
         if (setup.sms && withContext(Dispatchers.IO) { repo.needsImport() }) {
-            val r = withContext(Dispatchers.IO) { Importer.importInbox(context, UserConfig.IMPORT_DAYS) }
-            if (r.stored > 0) ctl.say("Imported ${r.stored} bank SMS from the last ${UserConfig.IMPORT_DAYS} days")
+            val r = withContext(Dispatchers.IO) { Importer.importInbox(context, ctl::importProgress) }
+            ctl.importDone()
+            if (r.stored > 0) ctl.say("Imported ${r.stored} bank SMS from your inbox")
             ctl.reload()
         }
     }
@@ -139,7 +139,7 @@ fun AppRoot(
 
     androidx.activity.compose.BackHandler(enabled = ctl.page != null) { ctl.page = null }
     androidx.activity.compose.BackHandler(enabled = ctl.page == null && tab != Tab.DAYS) { tab = Tab.DAYS }
-    SpendShell(tab = tab, onTab = { tab = it; ctl.page = null }, showNav = setup.ready, snackbar = snackbar, fab = null) {
+    SpendShell(tab = tab, onTab = { tab = it; ctl.page = null }, showNav = setup.ready, snackbar = snackbar, fab = null, banner = ctl.importing?.let { { ImportBanner(it.first, it.second) } }) {
         val s = snap
         when {
             !setup.ready -> SetupScreen(setup, onRequestPermissions, onOpenAppSettings, onOpenBatterySettings)
@@ -261,7 +261,7 @@ private fun moreActions(ctl: AppController, s: Snapshot, pickers: Pickers, onBat
     addCash = { ctl.sheet = Sheet.Cash },
     importSms = {
         ctl.act {
-            val r = Importer.importInbox(ctl.context, UserConfig.IMPORT_DAYS)
+            val r = try { Importer.importInbox(ctl.context, ctl::importProgress) } finally { ctl.importDone() }
             "Checked ${r.scanned} SMS · ${r.stored} new bank messages added"
         }
     },

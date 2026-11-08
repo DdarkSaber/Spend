@@ -45,7 +45,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
-import com.girish.expensetracker.UserConfig
 import com.girish.expensetracker.core.Kind
 import com.girish.expensetracker.core.Source
 import com.girish.expensetracker.data.AutoBackup
@@ -156,7 +155,7 @@ internal fun MoreScreen(snap: Snapshot, setup: Setup, isNew: (Row) -> Boolean, o
 
         item {
             Section("Data") {
-                Action(Icons.Outlined.Sms, "Import SMS history", "Re-reads the last ${UserConfig.IMPORT_DAYS} days", actions.importSms)
+                Action(Icons.Outlined.Sms, "Import SMS history", "Re-reads your whole SMS inbox", actions.importSms)
                 Hairline()
                 Action(Icons.Outlined.UploadFile, "Import bank statement (CSV)", "History from before the app", actions.importStatement)
                 Hairline()

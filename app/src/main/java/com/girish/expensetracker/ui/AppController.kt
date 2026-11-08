@@ -56,6 +56,15 @@ internal class AppController(val context: Context, val repo: Repo, private val s
 
     fun reload() { reloads++ }
 
+    /** (SMS read, inbox size) while an inbox import runs; null otherwise. */
+    var importing by mutableStateOf<Pair<Int, Int>?>(null)
+        private set
+
+    /** Called from the import thread after each chunk. */
+    fun importProgress(done: Int, total: Int) { scope.launch { importing = done to total } }
+
+    fun importDone() { scope.launch { importing = null } }
+
     fun say(message: String) { scope.launch { snackbar.showSnackbar(message) } }
 
     /**

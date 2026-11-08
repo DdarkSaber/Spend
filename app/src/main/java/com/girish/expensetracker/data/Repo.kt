@@ -260,6 +260,24 @@ class Repo(val store: Store) {
     /** Store an SMS if it comes from a bank transaction sender. Returns true when it was new. */
     fun ingest(sender: String, body: String, receivedAt: Long): Boolean = ingestId(sender, body, receivedAt) != null
 
+    /** One alert to store: sender, text, when it arrived and where from. */
+    data class Incoming(val sender: String, val body: String, val receivedAt: Long, val channel: String = CHANNEL_SMS)
+
+    /** Stores many alerts in one transaction, reading the profile once; returns how many were new. */
+    fun ingestAll(items: List<Incoming>): Int {
+        if (items.isEmpty()) return 0
+        val profile = profile()
+        val learned = store.learned()
+        return store.inTransaction {
+            items.count { m ->
+                when (SmsReader.read(m.sender, m.body, profile, learned)) {
+                    ReadResult.NotBank, ReadResult.Promo -> false
+                    else -> store.insertSmsId(m.sender, m.body, m.receivedAt, m.channel) != null
+                }
+            }
+        }
+    }
+
     /** Like [ingest], returning the stored SMS's id (for the quick-tag notification). */
     fun ingestId(sender: String, body: String, receivedAt: Long): Long? {
         return when (SmsReader.read(sender, body, profile(), store.learned())) {

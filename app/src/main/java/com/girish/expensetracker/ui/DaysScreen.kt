@@ -39,7 +39,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.girish.expensetracker.UserConfig
 import com.girish.expensetracker.core.Ledger
 import com.girish.expensetracker.data.Row
 import com.girish.expensetracker.data.Snapshot
@@ -68,7 +67,9 @@ internal fun DaysScreen(
     var range by remember { mutableStateOf(0) } // 0 = 7 days, 1 = salary month, 2 = 4 months
     var month by remember { mutableStateOf(YearMonth.from(snap.today)) }
     var selected by remember { mutableStateOf(snap.today) }
-    val earliest = YearMonth.from(snap.today.minusDays(140))
+    // The calendar goes back to the first month with any data (all imported history), not a fixed window.
+    val earliest = remember(snap) { YearMonth.from(snap.rows.minOfOrNull { it.txn.day }?.coerceAtMost(snap.today) ?: snap.today) }
+    var yearsOpen by remember { mutableStateOf(false) }
     val perDay = remember(snap) { snap.rows.groupBy { it.txn.day } }
     val dayTotals = remember(snap) { perDay.mapValues { (_, rows) -> rows.sumOf { Ledger.todayAmount(it.txn) } } }
     val rows = perDay[selected].orEmpty().sortedByDescending { it.txn.receivedAt }
@@ -147,7 +148,20 @@ internal fun DaysScreen(
                     RoundIcon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, "Previous month", { if (month > earliest) month = month.minusMonths(1) }, size = 34.dp)
                     RoundIcon(Icons.AutoMirrored.Filled.KeyboardArrowRight, "Next month", { if (month < YearMonth.from(snap.today)) month = month.plusMonths(1) }, size = 34.dp)
                 }
-                Text(month.month.getDisplayName(TextStyle.FULL, Locale.ENGLISH) + " " + month.year, style = MaterialTheme.typography.bodyMedium, color = t.ink2, modifier = Modifier.padding(bottom = 10.dp))
+                val latest = YearMonth.from(snap.today)
+                val years = (latest.year downTo earliest.year).toList()
+                Text(
+                    month.month.getDisplayName(TextStyle.FULL, Locale.ENGLISH) + " " + month.year + if (years.size > 1) (if (yearsOpen) "  ▴" else "  ▾") else "",
+                    style = MaterialTheme.typography.bodyMedium, color = t.ink2,
+                    modifier = Modifier.padding(bottom = 10.dp).clip(CircleShape).clickable(enabled = years.size > 1) { yearsOpen = !yearsOpen },
+                )
+                if (yearsOpen && years.size > 1) {
+                    YearPicker(years, month.year) { y ->
+                        val m = YearMonth.of(y, month.monthValue)
+                        month = if (m < earliest) earliest else if (m > latest) latest else m
+                        yearsOpen = false
+                    }
+                }
                 Calendar(month, dayTotals, selected, snap.today) { selected = it }
             }
         }
@@ -168,6 +182,24 @@ internal fun DaysScreen(
                     TxnRow(r, isNew(r), onRow)
                 }
             }
+        }
+    }
+}
+
+/** One chip per year that has data, newest first. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun YearPicker(years: List<Int>, current: Int, onPick: (Int) -> Unit) {
+    androidx.compose.foundation.layout.FlowRow(
+        Modifier.padding(bottom = 10.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        years.forEach { y ->
+            androidx.compose.material3.FilterChip(
+                selected = y == current, onClick = { onPick(y) }, label = { Text(y.toString()) },
+                colors = chipColors(), border = chipBorder(y == current),
+            )
         }
     }
 }
@@ -237,7 +269,7 @@ private fun EmptyLedger(onLoadDemo: (() -> Unit)?) {
     Panel {
         Text("No bank SMS yet", style = MaterialTheme.typography.titleLarge, color = t.ink)
         Text(
-            "Spends appear here the moment your bank sends a transaction SMS. Older messages are imported once from the last ${UserConfig.IMPORT_DAYS} days.",
+            "Spends appear here the moment your bank sends a transaction SMS. Older messages are imported once from your SMS history.",
             style = MaterialTheme.typography.bodyMedium, color = t.ink2, modifier = Modifier.padding(top = 6.dp),
         )
         if (onLoadDemo != null) {
