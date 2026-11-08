@@ -75,6 +75,12 @@ object SmsReader {
     }
 
     /** The bank behind a DLT sender ("VM-AXISBK-S" -> "AXIS"), or null for anything that isn't a bank. */
+    /** The first DLT entity code of [bank] ("AXIS" -> "AXISBK"), for synthetic senders of notification alerts. */
+    fun codeFor(bank: String): String? = bankCodes.entries.firstOrNull { it.value == bank }?.key
+
+    /** Every bank the reader knows, by its short name. */
+    val banks: Set<String> get() = bankCodes.values.toSet()
+
     fun bankOf(sender: String): String? =
         dltHeader.matchEntire(sender.trim())?.groupValues?.get(1)?.uppercase()?.let { bankCodes[it] }
 
@@ -233,9 +239,13 @@ internal object Layouts {
         Layout(Regex("^INR $AMT debited DCB Bank a/c\\*(\\d{4}) POS/Ecom txn to (.+?) on (\\d{2}-\\d{2}-\\d{4})", I)) { m ->
             ParsedSms(Template.DCB_CARD_SPENT, Direction.DEBIT, paise(m[1]), acct("DCB", m[2]), cleanMerchant(m[3]), Dates.parse(m[4]), null, null)
         },
-        // INR 1,199.00 spent using ICICI Bank Card XX9999 on 16-Oct-26 on HOYOVERSE. Avl Limit: ...
-        Layout(Regex("^INR $AMT spent using ICICI Bank Card XX(\\d{4}) on (\\d{2}-[A-Z]{3}-\\d{2}) on (.+?)\\. Avl Limit", I)) { m ->
+        // Both ICICI card-spend wordings: "INR .. spent using .. on MERCHANT. Avl Limit" and "Rs .. spent on .. at MERCHANT. Avl Lmt".
+        Layout(Regex("^(?:Rs\\.?|INR)\\s?$AMT spent (?:on|using) ICICI Bank Card XX(\\d{4}) on (\\d{1,2}-[A-Za-z]{3}-\\d{2}) (?:on|at) (.+?)\\.?\\s*Avl\\s*L(?:imi|m)t", I)) { m ->
             ParsedSms(Template.ICICI_CARD_SPENT, Direction.DEBIT, paise(m[1]), card("ICICI", m[2]), cleanMerchant(m[4]), Dates.parse(m[3]), null, null)
+        },
+        // AMAZON PAY INDIA PRIVA refund of Rs 659.00 credited to ICICI Bank Credit Card XX4001 on 17-OCT-25.
+        Layout(Regex("refund of (?:Rs\\.?|INR)\\s?$AMT credited to ICICI Bank Credit Card XX(\\d{4}) on (\\d{1,2}-[A-Za-z]{3}-\\d{2})", I)) { m ->
+            ParsedSms(Template.GENERIC_CARD_REFUND, Direction.CREDIT, paise(m[1]), card("ICICI", m[2]), null, Dates.parse(m[3]), null, null)
         },
         // Dear Customer, payment of INR 2,000.00 towards your ICICI Bank Credit Card XX9998 has been received through Click to Pay on 03-SEP-26.
         Layout(Regex("payment of INR $AMT towards your ICICI Bank Credit Card XX(\\d{4}) has been received.*? on (\\d{2}-[A-Z]{3}-\\d{2})", I)) { m ->

@@ -32,6 +32,9 @@ internal sealed interface Sheet {
     data class Teach(val sms: UnparsedSms) : Sheet
     data object Streak : Sheet
     data class Group(val group: com.girish.expensetracker.data.FriendGroup?) : Sheet
+    data class SourceSettings(val source: com.girish.expensetracker.core.Source) : Sheet
+    data class OlderSources(val result: Repo.ArchiveResult) : Sheet
+    data object AlertApps : Sheet
 }
 
 /** Full-screen pages that sit above the tabs (back returns to the tab). */
@@ -40,6 +43,7 @@ internal sealed interface Page {
     data object Trips : Page
     data object Habits : Page
     data object Year : Page
+    data object Sources : Page
     data class Person(val key: String) : Page
 }
 
@@ -55,6 +59,17 @@ internal class AppController(val context: Context, val repo: Repo, private val s
         private set
 
     fun reload() { reloads++ }
+
+    /** What is being imported, items done and total, while an import runs; null otherwise. */
+    var importing by mutableStateOf<Triple<String, Int, Int>?>(null)
+        private set
+
+    /** Called from the import thread after each chunk. */
+    fun importProgress(done: Int, total: Int) = importProgress("Importing SMS history", done, total)
+
+    fun importProgress(what: String, done: Int, total: Int) { scope.launch { importing = Triple(what, done, total) } }
+
+    fun importDone() { scope.launch { importing = null } }
 
     fun say(message: String) { scope.launch { snackbar.showSnackbar(message) } }
 

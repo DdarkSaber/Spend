@@ -117,7 +117,7 @@ internal fun CardHealthPanel(h: CardHealth, onEdit: () -> Unit, onMarkPaid: ((Bo
         }
         val u = h.utilization
         if (u == null || h.limitPaise == null) {
-            Text("${rupees(h.outstandingPaise)} outstanding.", style = AmountStyle, color = t.ink)
+            Text("${rupees(h.outstandingPaise)} outstanding${if (h.balanceEstimated) " (estimated)" else ""}.", style = AmountStyle, color = t.ink)
             Text(
                 "Set this card's credit limit to see how much of it you're using. Banks report the balance on the statement date, and under 30% of the limit keeps your credit score healthy.",
                 style = MaterialTheme.typography.bodySmall, color = t.ink2, modifier = Modifier.padding(top = 6.dp),
@@ -129,7 +129,8 @@ internal fun CardHealthPanel(h: CardHealth, onEdit: () -> Unit, onMarkPaid: ((Bo
                 Text("$pct%", style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight(700)), color = if (u >= Credit.HEALTHY) t.warn else t.ink)
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    "used · ${rupees(h.outstandingPaise)} of ${rupees(h.limitPaise)}" + if (h.limitEstimated) " (est. limit)" else "",
+                    "used · ${rupees(h.outstandingPaise)} of ${rupees(h.limitPaise)}" +
+                        (if (h.limitEstimated) " (est. limit)" else "") + (if (h.balanceEstimated) " · estimated" else ""),
                     style = MaterialTheme.typography.bodySmall, color = t.ink2, modifier = Modifier.padding(bottom = 6.dp),
                 )
             }
@@ -152,17 +153,22 @@ internal fun CardHealthPanel(h: CardHealth, onEdit: () -> Unit, onMarkPaid: ((Bo
             val left = h.billLeftPaise
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("Statement of ${s.statementDate.format(dm)}", style = MaterialTheme.typography.titleSmall, color = t.ink)
                     Text(
-                        listOfNotNull(
+                        if (h.statementStale) "Last statement seen ${s.statementDate.format(dm)}" else "Statement of ${s.statementDate.format(dm)}",
+                        style = MaterialTheme.typography.titleSmall, color = t.ink,
+                    )
+                    Text(
+                        if (h.statementStale) "A newer statement was due ${h.missedSince?.format(dm) ?: ""} but hasn't arrived — balance estimated."
+                        else listOfNotNull(
                             s.totalDuePaise?.let { "total ${rupees(it)}" },
                             s.minDuePaise?.let { "min ${rupees(it)}" },
                             s.dueDate?.let { "due ${it.format(dm)}" },
                         ).joinToString(" · ").ifEmpty { "amount not in the SMS" },
-                        style = MaterialTheme.typography.bodySmall, color = t.ink2,
+                        style = MaterialTheme.typography.bodySmall, color = if (h.statementStale) t.warn else t.ink2,
                     )
                 }
                 when {
+                    h.statementStale -> Tag("missed")
                     h.markedPaid -> Tag("paid")
                     left == null -> Unit
                     left == 0L -> Tag("paid")
@@ -170,7 +176,7 @@ internal fun CardHealthPanel(h: CardHealth, onEdit: () -> Unit, onMarkPaid: ((Bo
                 }
             }
             // The payment SMS didn't come (or never comes for this bank): the owner says it's paid, so it stops showing as due.
-            if (onMarkPaid != null) when {
+            if (onMarkPaid != null && !h.statementStale) when {
                 h.markedPaid -> Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("You marked this paid.", style = MaterialTheme.typography.bodySmall, color = t.ink3, modifier = Modifier.weight(1f))
                     TextButton(onClick = { onMarkPaid(false) }) { Text("Not paid", color = t.ink2) }

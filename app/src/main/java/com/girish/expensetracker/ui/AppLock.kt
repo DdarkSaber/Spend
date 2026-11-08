@@ -23,7 +23,12 @@ internal class AppLock(private val activity: ComponentActivity) {
     val enabled = mutableStateOf(prefs.getBoolean(KEY, false))
     val locked = mutableStateOf(enabled.value)
 
-    fun onStop() { hiddenAt = SystemClock.elapsedRealtime() }
+    fun onStop() {
+        hiddenAt = SystemClock.elapsedRealtime()
+        // A prompt left open in the background is cancelled by the system; forget it so the next start asks again.
+        showing?.cancel()
+        showing = null
+    }
 
     fun onStart() {
         if (enabled.value && hiddenAt > 0 && SystemClock.elapsedRealtime() - hiddenAt > GRACE_MS) locked.value = true
@@ -31,7 +36,15 @@ internal class AppLock(private val activity: ComponentActivity) {
         hideFromRecents(enabled.value)
     }
 
-    fun unlock() = prompt("Unlock Spend") { locked.value = false }
+    fun unlock() {
+        // With no screen lock there is nothing to unlock with: open, and turn the lock off.
+        if (!activity.getSystemService(KeyguardManager::class.java).isDeviceSecure) {
+            locked.value = false
+            if (enabled.value) save(false)
+            return
+        }
+        prompt("Unlock Spend") { locked.value = false }
+    }
 
     /** Turning it on asks once, so the owner knows their fingerprint/PIN works before being locked out. */
     fun setEnabled(on: Boolean) {
@@ -62,17 +75,52 @@ internal class AppLock(private val activity: ComponentActivity) {
         }
     }
 
-    private fun show(title: String, onSuccess: () -> Unit) {
+    // The prompt on screen now, if any: a second one (app start + an Unlock tap) would cancel the first silently.
+    private var showing: CancellationSignal? = null
+
+    private fun show(title: String, onSuccess: () -> Unit, pinOnly: Boolean = false) {
+        if (showing != null) return
+        val signal = CancellationSignal()
+        showing = signal
         BiometricPrompt.Builder(activity)
             .setTitle(title)
-            .setAllowedAuthenticators(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
+            .setAllowedAuthenticators(if (pinOnly) DEVICE_CREDENTIAL else BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
             .build()
-            .authenticate(CancellationSignal(), activity.mainExecutor, object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) = onSuccess()
+            .authenticate(signal, activity.mainExecutor, object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    showing = null
+                    onSuccess()
+                }
+
+                // Closed without success (cancelled, another window took over, too many tries): say why, so the
+                // Unlock button never looks dead; tapping it again opens a fresh prompt.
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
+                    showing = null
+                    // No fingerprint or face enrolled (some phones then refuse the combined prompt): ask for the PIN alone.
+                    if (errorCode == BiometricPrompt.BIOMETRIC_ERROR_NO_BIOMETRICS && !pinOnly) {
+                        show(title, onSuccess, pinOnly = true)
+                        return
+                    }
+                    // The phone can't ask at all (screen lock removed, sensor unavailable): never strand the owner.
+                    if (errorCode in cannotAsk) {
+                        locked.value = false
+                        save(false)
+                        Toast.makeText(activity, "App lock turned off: this phone has no screen lock to unlock with", Toast.LENGTH_LONG).show()
+                        return
+                    }
+                    if (errorCode != BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED && errorCode != BiometricPrompt.BIOMETRIC_ERROR_CANCELED) {
+                        Toast.makeText(activity, errString ?: "Couldn't unlock", Toast.LENGTH_SHORT).show()
+                    }
+                }
             })
     }
 
     private companion object {
+        val cannotAsk = setOf(
+            BiometricPrompt.BIOMETRIC_ERROR_NO_DEVICE_CREDENTIAL,
+            BiometricPrompt.BIOMETRIC_ERROR_HW_NOT_PRESENT,
+            BiometricPrompt.BIOMETRIC_ERROR_HW_UNAVAILABLE,
+        )
         const val KEY = "lock"
         const val GRACE_MS = 30_000L
     }

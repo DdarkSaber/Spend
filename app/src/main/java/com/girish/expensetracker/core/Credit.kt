@@ -96,8 +96,17 @@ data class CardHealth(
     val title: String? = null,
     /** The owner said this statement is paid (no payment SMS came). */
     val markedPaid: Boolean = false,
+    /** The latest statement is older than a full cycle: a newer one was expected but hasn't arrived. */
+    val statementStale: Boolean = false,
+    /** When [statementStale], the date a newer statement was due ("missed since"). */
+    val missedSince: LocalDate? = null,
+    /** The balance is worked out without a current statement (missed or none yet), so it's an estimate. */
+    val balanceEstimated: Boolean = false,
 ) {
     val isGroup: Boolean get() = members.isNotEmpty()
+
+    /** The current statement, or null when the latest one is stale (shown as "last seen" instead). */
+    val currentStatement: CardStatement? get() = statement?.takeUnless { statementStale }
 
     val utilization: Double? get() = limitPaise?.takeIf { it > 0 }?.let { outstandingPaise.toDouble() / it }
 
@@ -139,6 +148,9 @@ data class MarkedPaid(val statementDate: LocalDate, val amountPaise: Long, val a
 const val UNASSIGNED = "?"
 
 object Credit {
+
+    /** A statement may arrive a few days late before the app treats the last one as missed. */
+    const val STALE_GRACE_DAYS = 6L
 
     /** Bureaus treat under 30% as healthy and under 10% as best. */
     const val HEALTHY = 0.30
@@ -256,11 +268,15 @@ object Credit {
             cardPays.none { c -> c.amountPaise == a.amountPaise && kotlin.math.abs(java.time.temporal.ChronoUnit.DAYS.between(a.day, c.day)) <= 3 }
         }
         fun paidAfter(after: (Txn) -> Boolean) = unconfirmed.filter(after).sumOf { it.amountPaise }
+        // A statement that is newer than the latest available-limit SMS is the better anchor (self-heal on a new statement).
+        val statementNewer = stmt?.totalDuePaise != null && (latestSeen == null || !stmt.statementDate.isBefore(latestSeen.at.toLocalDate()))
         var outstanding = when {
-            // Best: the bank told us the available limit; add what happened after that SMS.
+            statementNewer -> stmt!!.totalDuePaise!! + mine.filter { it.day > stmt.statementDate }.sumOf(::owed) -
+                paidAfter { it.day > stmt.statementDate }
+            // The bank told us the available limit more recently; add what happened after that SMS.
             limit != null && latestSeen != null -> limit - latestSeen.availablePaise + mine.filter { it.receivedAt > latestSeen.at }.sumOf(::owed) -
                 paidAfter { it.receivedAt > latestSeen.at }
-            // Next best: the last statement's total, plus spends and minus payments since.
+            // The last statement's total, plus spends and minus payments since.
             stmt?.totalDuePaise != null -> stmt.totalDuePaise + mine.filter { it.day > stmt.statementDate }.sumOf(::owed) -
                 paidAfter { it.day > stmt.statementDate }
             // Otherwise: this month's card activity.
@@ -282,7 +298,18 @@ object Credit {
             if (latestSeen == null || marked.at > latestSeen.at) outstanding = (outstanding - extra).coerceAtLeast(0L)
         }
         val day = ownerStatementDay ?: stmt?.statementDate?.dayOfMonth
-        return CardHealth(card, limit, ownerLimitPaise == null && limit != null, outstanding, stmt, day?.let { nextOn(it, today) }, paid, markedPaid = marked != null && stmt != null && marked.statementDate == stmt.statementDate)
+        // A newer statement than the last limit SMS should have arrived by now? Then the one we hold is stale, and the
+        // balance is an estimate until a new statement (or an available-limit SMS) heals it.
+        val expectedNext = stmt?.let { nextOn(day ?: it.statementDate.dayOfMonth, it.statementDate) }
+        val healedByLimit = latestSeen != null && stmt != null && latestSeen.at.toLocalDate() >= stmt.statementDate
+        val stale = stmt != null && expectedNext != null && today > expectedNext.plusDays(STALE_GRACE_DAYS) && !healedByLimit
+        return CardHealth(
+            card, limit, ownerLimitPaise == null && limit != null, outstanding, stmt, day?.let { nextOn(it, today) }, paid,
+            markedPaid = marked != null && stmt != null && marked.statementDate == stmt.statementDate,
+            statementStale = stale,
+            missedSince = if (stale) expectedNext else null,
+            balanceEstimated = stmt == null || stale,
+        )
     }
 
     /**

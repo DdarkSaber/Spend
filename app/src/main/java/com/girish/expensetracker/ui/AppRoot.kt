@@ -36,7 +36,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.girish.expensetracker.BuildConfig
 import com.girish.expensetracker.SpendApp
-import com.girish.expensetracker.UserConfig
 import com.girish.expensetracker.core.Ledger
 import com.girish.expensetracker.core.PayeeType
 import com.girish.expensetracker.data.Row
@@ -105,12 +104,14 @@ fun AppRoot(
     var snap by remember { mutableStateOf<Snapshot?>(null) }
     var tab by remember { mutableStateOf(Tab.DAYS) }
     var seenBefore by remember { mutableLongStateOf(Long.MAX_VALUE) }
+    var alertAccessOff by remember { mutableStateOf(false) }
 
     // First run: once SMS permission is granted and nothing is stored yet, import recent history automatically.
     LaunchedEffect(setup.sms) {
         if (setup.sms && withContext(Dispatchers.IO) { repo.needsImport() }) {
-            val r = withContext(Dispatchers.IO) { Importer.importInbox(context, UserConfig.IMPORT_DAYS) }
-            if (r.stored > 0) ctl.say("Imported ${r.stored} bank SMS from the last ${UserConfig.IMPORT_DAYS} days")
+            val r = withContext(Dispatchers.IO) { Importer.importInbox(context, ctl::importProgress) }
+            ctl.importDone()
+            if (r.stored > 0) ctl.say("Imported ${r.stored} bank SMS from your inbox")
             ctl.reload()
         }
     }
@@ -119,7 +120,10 @@ fun AppRoot(
         Seen.markNow(context)
     }
     LaunchedEffect(tick, ctl.reloads) {
-        snap = withContext(Dispatchers.IO) { repo.snapshot() }
+        snap = withContext(Dispatchers.IO) { repo.snapshot().also { com.girish.expensetracker.data.Audit.collapses(context, it.collapses) } }
+        alertAccessOff = withContext(Dispatchers.IO) {
+            repo.alertApps().any { it.enabled } && !com.girish.expensetracker.notify.AlertListener.accessGranted(context)
+        }
         if (setup.notifications) withContext(Dispatchers.IO) { Notifier.refresh(context) }
     }
 
@@ -139,7 +143,7 @@ fun AppRoot(
 
     androidx.activity.compose.BackHandler(enabled = ctl.page != null) { ctl.page = null }
     androidx.activity.compose.BackHandler(enabled = ctl.page == null && tab != Tab.DAYS) { tab = Tab.DAYS }
-    SpendShell(tab = tab, onTab = { tab = it; ctl.page = null }, showNav = setup.ready, snackbar = snackbar, fab = null) {
+    SpendShell(tab = tab, onTab = { tab = it; ctl.page = null }, showNav = setup.ready, snackbar = snackbar, fab = null, banner = ctl.importing?.let { { ImportBanner(it.first, it.second, it.third) } }) {
         val s = snap
         when {
             !setup.ready -> SetupScreen(setup, onRequestPermissions, onOpenAppSettings, onOpenBatterySettings)
@@ -158,6 +162,8 @@ fun AppRoot(
                         onCash = { ctl.sheet = Sheet.Cash }, onMore = { tab = Tab.MORE }, onReview = { ctl.sheet = Sheet.Owner },
                         onSearch = { ctl.page = Page.Search },
                         onHabits = { ctl.page = Page.Habits },
+                        alertAccessOff = alertAccessOff,
+                        onFixAlerts = { openNotificationAccess(context) },
                         onLoadDemo = if (BuildConfig.DEBUG) ({ ctl.act { "Loaded ${loadDemo()} demo bank SMS (debug build only)" } }) else null,
                     )
                     Tab.MONTH -> MonthScreen(
@@ -214,6 +220,16 @@ fun AppRoot(
                                 ctl.reload()
                             },
                             autoBackup = AutoBackup.state(context),
+                            alerts = repo.alertApps().let { apps ->
+                                val on = apps.filter { it.enabled }
+                                if (alertAccessOff) "Notification access is off" else if (on.isEmpty()) "None" else on.joinToString(", ") { it.label }
+                            },
+                            auditOn = com.girish.expensetracker.data.Audit.enabled(context),
+                            onAudit = { on ->
+                                com.girish.expensetracker.data.Audit.setEnabled(context, on)
+                                ctl.say(if (on) "Audit log on" else "Audit log off")
+                                ctl.reload()
+                            },
                         ),
                     )
                 }
@@ -233,6 +249,7 @@ private fun PageHost(ctl: AppController, s: Snapshot, isNew: (Row) -> Boolean, o
             val tones = LocalTones.current
             YearScreen(s, onBack = { ctl.page = null }, onShare = { runCatching { shareYear(ctl.context, s, tones) }.onFailure { ctl.say("Couldn't share: ${it.message}") } })
         }
+        Page.Sources -> SourcesScreen(s, onBack = { ctl.page = null }, onSource = { ctl.sheet = Sheet.SourceSettings(it) })
         Page.Trips -> TripsScreen(
             s, isNew, onBack = { ctl.page = null }, onNew = { ctl.sheet = Sheet.NewTrip },
             onDelete = { trip -> ctl.act { store.deleteTrip(trip.id); "Deleted ${trip.name}" } }, onRow = openRow,
@@ -261,11 +278,21 @@ private fun moreActions(ctl: AppController, s: Snapshot, pickers: Pickers, onBat
     addCash = { ctl.sheet = Sheet.Cash },
     importSms = {
         ctl.act {
-            val r = Importer.importInbox(ctl.context, UserConfig.IMPORT_DAYS)
+            val r = try { Importer.importInbox(ctl.context, ctl::importProgress) } finally { ctl.importDone() }
             "Checked ${r.scanned} SMS · ${r.stored} new bank messages added"
         }
     },
     importStatement = pickers.openCsv,
+    importHistory = pickers.openArchive,
+    sources = { ctl.page = Page.Sources },
+    alertApps = { ctl.sheet = Sheet.AlertApps },
+    debugBundle = {
+        ctl.act(closeSheet = false) {
+            val zip = com.girish.expensetracker.data.DebugBundle.build(ctl.context, store)
+            withContext(Dispatchers.Main) { com.girish.expensetracker.data.DebugBundle.share(ctl.context, zip) }
+            null
+        }
+    },
     exportCsv = { ctl.act(closeSheet = false) { runCatching { "Saved to " + CsvExport.export(ctl.context, s) }.getOrElse { "Couldn't save the CSV: ${it.message}" } } },
     budgets = { ctl.sheet = Sheet.Budgets },
     trips = { ctl.page = Page.Trips },

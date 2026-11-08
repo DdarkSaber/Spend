@@ -22,7 +22,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.girish.expensetracker.UserConfig
 import com.girish.expensetracker.data.Row
 
 // ---------------------------------------------------------------- setup
@@ -58,7 +57,7 @@ internal fun SetupScreen(setup: Setup, onRequest: () -> Unit, onAppSettings: () 
         }
         item {
             Panel {
-                Step(setup.sms, "Allow SMS", "Reads bank transaction messages as they arrive, and imports the last ${UserConfig.IMPORT_DAYS} days once.")
+                Step(setup.sms, "Allow SMS", "Reads bank transaction messages as they arrive, and imports your SMS history once.")
                 Hairline()
                 Step(setup.notifications, "Allow notifications", "Keeps “Today · Month” pinned in your notification shade.")
                 Hairline()

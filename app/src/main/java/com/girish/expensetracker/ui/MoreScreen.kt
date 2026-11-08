@@ -1,6 +1,11 @@
 package com.girish.expensetracker.ui
 
 import androidx.compose.material.icons.outlined.EmojiEvents
+import androidx.compose.material.icons.outlined.AccountBalance
+import androidx.compose.material.icons.outlined.NotificationsActive
+import androidx.compose.material.icons.outlined.ReceiptLong
+import androidx.compose.material.icons.outlined.BugReport
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.LocalFireDepartment
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -45,7 +50,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
-import com.girish.expensetracker.UserConfig
 import com.girish.expensetracker.core.Kind
 import com.girish.expensetracker.core.Source
 import com.girish.expensetracker.data.AutoBackup
@@ -61,6 +65,8 @@ internal class MoreActions(
     val addCash: () -> Unit,
     val importSms: () -> Unit,
     val importStatement: () -> Unit,
+    val importHistory: () -> Unit,
+    val sources: () -> Unit,
     val exportCsv: () -> Unit,
     val budgets: () -> Unit,
     val trips: () -> Unit,
@@ -74,6 +80,8 @@ internal class MoreActions(
     val year: () -> Unit,
     val editCardGroup: (com.girish.expensetracker.core.CardHealth) -> Unit = {},
     val askCardGroupsAgain: (String) -> Unit = {},
+    val alertApps: () -> Unit = {},
+    val debugBundle: () -> Unit = {},
 )
 
 /** Switches and their current values. */
@@ -85,6 +93,9 @@ internal class MoreSettings(
     val digestOn: Boolean,
     val onDigest: (Boolean) -> Unit,
     val autoBackup: AutoBackup.State,
+    val alerts: String = "",
+    val auditOn: Boolean = false,
+    val onAudit: (Boolean) -> Unit = {},
 )
 
 @Composable
@@ -100,6 +111,8 @@ internal fun MoreScreen(snap: Snapshot, setup: Setup, isNew: (Row) -> Boolean, o
         item {
             Section("Your money") {
                 Action(Icons.Outlined.CreditCard, "Accounts, name & salary day", "What the app learned from your SMS", actions.reviewSetup)
+                Hairline()
+                Action(Icons.Outlined.AccountBalance, "Cards and accounts", "Active, past and ignored · add-on and debit cards", actions.sources)
                 Hairline()
                 Action(Icons.Outlined.Savings, "Budgets", "Monthly and per category, with alerts", actions.budgets)
                 Hairline()
@@ -145,6 +158,16 @@ internal fun MoreScreen(snap: Snapshot, setup: Setup, isNew: (Row) -> Boolean, o
         }
 
         item {
+            Section("Alerts from other apps") {
+                Action(Icons.Outlined.NotificationsActive, "Alert apps", settings.alerts, actions.alertApps)
+                Hairline()
+                Toggle(Icons.Outlined.ReceiptLong, "Audit log", "Records every alert for the validation week", settings.auditOn, settings.onAudit)
+                Hairline()
+                Action(Icons.Outlined.BugReport, "Export debug bundle", "Audit log + database, to share yourself", actions.debugBundle)
+            }
+        }
+
+        item {
             Section("Notifications") {
                 Toggle(Icons.Outlined.NotificationsNone, "Evening summary", "Quiet 9 pm notification, no sound", settings.digestOn, settings.onDigest)
                 if (!setup.batteryUnrestricted) {
@@ -156,7 +179,9 @@ internal fun MoreScreen(snap: Snapshot, setup: Setup, isNew: (Row) -> Boolean, o
 
         item {
             Section("Data") {
-                Action(Icons.Outlined.Sms, "Import SMS history", "Re-reads the last ${UserConfig.IMPORT_DAYS} days", actions.importSms)
+                Action(Icons.Outlined.Sms, "Import SMS history", "Re-reads your whole SMS inbox", actions.importSms)
+                Hairline()
+                Action(Icons.Outlined.History, "Import history file", "One-time history export (.jsonl)", actions.importHistory)
                 Hairline()
                 Action(Icons.Outlined.UploadFile, "Import bank statement (CSV)", "History from before the app", actions.importStatement)
                 Hairline()
