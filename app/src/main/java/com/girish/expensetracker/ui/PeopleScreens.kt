@@ -115,6 +115,8 @@ internal fun PeopleScreen(
     onGroup: (com.girish.expensetracker.data.FriendGroup?) -> Unit = {},
     onReviewPayees: () -> Unit = {},
     onDismissReview: () -> Unit = {},
+    onTheyPaid: () -> Unit = {},
+    onSettleIOwe: (com.girish.expensetracker.core.Debt) -> Unit = {},
     onOpen: (Person) -> Unit,
 ) {
     val t = LocalTones.current
@@ -173,7 +175,8 @@ internal fun PeopleScreen(
                 }
             }
         }
-        if (snap.debts.isNotEmpty()) item { OwedPanel(snap.debts, onSettle) }
+        item { SecondaryButton("They paid for me", onTheyPaid, Modifier.fillMaxWidth()) }
+        if (snap.debts.isNotEmpty() || snap.iOwe.isNotEmpty()) item { OwedPanel(snap.debts, onSettle, snap.iOwe, onSettleIOwe) }
         if (all.isEmpty()) item {
             Panel { Text("No payments to people yet. UPI payments to a name appear here.", style = MaterialTheme.typography.bodyMedium, color = t.ink2) }
         }
@@ -225,7 +228,7 @@ private fun PeopleGroup(title: String, list: List<Person>, debts: List<com.giris
 // ---------------------------------------------------------------- detail
 
 @Composable
-internal fun PersonScreen(snap: Snapshot, person: Person, onBack: () -> Unit, onRow: (Row) -> Unit, onMarkShop: (Person) -> Unit) {
+internal fun PersonScreen(snap: Snapshot, person: Person, onBack: () -> Unit, onRow: (Row) -> Unit, onMarkShop: (Person) -> Unit, onTheyPaid: () -> Unit = {}) {
     val t = LocalTones.current
     var range by remember { mutableStateOf(0) } // 0 this month, 1 last 3 months, 2 all time
     val cycles = remember(snap) { Ledger.cycles(snap.today, snap.txns, 3) }
@@ -260,6 +263,20 @@ internal fun PersonScreen(snap: Snapshot, person: Person, onBack: () -> Unit, on
                         }
                     }
                 }
+            }
+        }
+        item {
+            // One netted balance with this person.
+            val owes = snap.debts.filter { d -> (d.label != null && d.label in person.labels) || People.same(d.name, person.name) }.sumOf { it.leftPaise }
+            val iOwe = snap.iOwe.filter { d -> (d.label != null && d.label in person.labels) || People.same(d.name, person.name) }.sumOf { it.leftPaise }
+            val net = owes - iOwe
+            Panel {
+                Text(
+                    when { net > 0 -> "${person.name} owes you ${rupees(net)}"; net < 0 -> "You owe ${person.name} ${rupees(-net)}"; else -> "All settled with ${person.name}" },
+                    style = MaterialTheme.typography.titleMedium, color = if (net < 0) t.warn else t.ink,
+                )
+                Gap(10.dp)
+                SecondaryButton("They paid for me", onTheyPaid, Modifier.fillMaxWidth())
             }
         }
         item { Segmented(listOf("This month", "3 months", "All time"), range, { range = it }) }

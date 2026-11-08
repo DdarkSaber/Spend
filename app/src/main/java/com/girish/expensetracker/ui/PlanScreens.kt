@@ -618,21 +618,25 @@ internal fun YearPanel(snap: Snapshot) {
 // ---------------------------------------------------------------- owed to you
 
 @Composable
-internal fun OwedPanel(debts: List<Debt>, onSettle: (Debt) -> Unit) {
-    if (debts.isEmpty()) return
+internal fun OwedPanel(debts: List<Debt>, onSettle: (Debt) -> Unit, iOwe: List<Debt> = emptyList(), onSettleIOwe: (Debt) -> Unit = {}) {
+    if (debts.isEmpty() && iOwe.isEmpty()) return
     val t = LocalTones.current
+    // One netted balance per person: either they owe you or you owe them.
     Panel(padding = PaddingValues(start = 18.dp, end = 18.dp, top = 18.dp, bottom = 8.dp)) {
-        PanelHeader("Owed to you", rupees(debts.sumOf { it.leftPaise }))
-        debts.forEachIndexed { k, d ->
+        PanelHeader("Balances", (if (debts.isNotEmpty()) "+" + rupees(debts.sumOf { it.leftPaise }) else "") +
+            (if (debts.isNotEmpty() && iOwe.isNotEmpty()) "  " else "") + (if (iOwe.isNotEmpty()) "−" + rupees(iOwe.sumOf { it.leftPaise }) else ""))
+        val all = debts.map { it to true } + iOwe.map { it to false }
+        all.forEachIndexed { k, (d, theyOwe) ->
             if (k > 0) Hairline()
+            val name = d.name.ifBlank { "Someone" }
             ListRow(
-                title = d.name.ifBlank { "Someone" },
-                subtitle = "since ${d.since.format(dm)} · clears when they pay you",
+                title = if (theyOwe) "$name owes you" else "You owe $name",
+                subtitle = "since ${d.since.format(dm)} · " + if (theyOwe) "clears when they pay you" else "clears when you pay them",
                 leading = { Avatar(d.name.ifBlank { "?" }, 36.dp) },
                 trailing = {
                     Column(horizontalAlignment = Alignment.End) {
-                        Text(rupees(d.leftPaise), style = AmountStyle, color = t.ink)
-                        Text("MARK PAID", style = DataLabel, color = t.accent, modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable { onSettle(d) }.padding(4.dp))
+                        Text(rupees(d.leftPaise), style = AmountStyle, color = if (theyOwe) t.ink else t.warn)
+                        Text("MARK PAID", style = DataLabel, color = t.accent, modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable { if (theyOwe) onSettle(d) else onSettleIOwe(d) }.padding(4.dp))
                     }
                 },
             )

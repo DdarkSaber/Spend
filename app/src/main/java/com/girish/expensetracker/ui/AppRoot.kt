@@ -210,6 +210,8 @@ fun AppRoot(
                         onSettle = { d -> ctl.act { settleDebt(d, s.rows); "${d.name} is settled" } },
                         onGroup = { ctl.sheet = Sheet.Group(it) },
                         onReviewPayees = { ctl.sheet = Sheet.PayeeReview },
+                        onTheyPaid = { ctl.sheet = Sheet.TheyPaid() },
+                        onSettleIOwe = { d -> ctl.act { settleIOwe(d, s.rows); "Marked paid: ${d.name}" } },
                         onDismissReview = { ctl.act { dismissPayeeReview(); "OK. Tap ✎ on any payment to change it later" } },
                     ) { ctl.page = Page.Person(it.key) }
                     Tab.MORE -> MoreScreen(
@@ -265,6 +267,7 @@ private fun PageHost(ctl: AppController, s: Snapshot, isNew: (Row) -> Boolean, o
             if (person == null) ctl.page = null
             else PersonScreen(
                 snap = s, person = person, onBack = { ctl.page = null }, onRow = openRow,
+                onTheyPaid = { ctl.sheet = Sheet.TheyPaid(person.key) },
                 onMarkShop = { who ->
                     ctl.page = null
                     ctl.act {

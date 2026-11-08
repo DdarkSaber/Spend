@@ -86,8 +86,10 @@ data class Snapshot(
     val statements: List<CardStatement> = emptyList(),
     val limitsSeen: List<LimitSeen> = emptyList(),
     val plan: Plan = Plan(),
-    /** Who still owes the owner money, from loans and splits. */
+    /** Who still owes the owner money, from loans and splits (netted against what the owner owes them). */
     val debts: List<Debt> = emptyList(),
+    /** Whom the owner still owes, from "They paid for me" (netted against what they owe the owner). */
+    val iOwe: List<Debt> = emptyList(),
     /** Foreign-currency charges seen in the last week (they can't be counted in rupees, so they are flagged). */
     val foreign: List<Unusual> = emptyList(),
     /** Row key -> the owner's tag ("Goa trip", "office"). */
@@ -259,6 +261,8 @@ data class Owner(val state: String, val displayName: String, val salaryDay: Int,
 
 private const val KEY_SETUP = "setup"
 private const val KEY_CONTACT_MATCHES = "contact_matches"
+private const val KEY_SETTLED_OWED = "settled_owed"
+private const val KEY_CREDIT_PERSON = "credit_person"
 private const val KEY_PAYEE_REVIEW_DISMISSED = "payee_review_dismissed"
 private const val KEY_NAME = "display_name"
 private const val KEY_SALARY_DAY = "salary_day"
@@ -498,6 +502,8 @@ class Repo(val store: Store) {
         val overrides = store.overrides()
         val splits = store.splits()
         val settledLoans = lines(KEY_SETTLED_LOANS)
+        val settledOwed = lines(KEY_SETTLED_OWED)
+        val creditPerson = creditPersons()
         val learned = store.learned()
         val foreign = mutableListOf<Unusual>()
         val dismissedRent = lines(KEY_RENT_DISMISSED)
@@ -554,6 +560,12 @@ class Repo(val store: Store) {
                     }
                     else if (forced == null && rentPayees.any { (label, typical) -> com.girish.expensetracker.core.RentFinder.isRent(t, label, typical) }) t = t.copy(category = "Rent")
                     splits["sms:${sms.id}"]?.let { t = t.copy(splitWith = it) }
+                    // "Paid on their behalf": a credit the owner put under a person (the payer's name differs).
+                    creditPerson[sms.id]?.let { label ->
+                        if (t.parsed.direction == Direction.CREDIT) t = t.copy(
+                            parsed = t.parsed.copy(counterparty = label), kind = Kind.PERSON_CREDIT, payeeType = PayeeType.PERSON, category = "Paid back",
+                        )
+                    }
                     // A loan settled by hand: neither spend nor still owed.
                     if (t.kind == Kind.LENT && sms.id.toString() in settledLoans) t = t.copy(kind = Kind.REPAID, category = "Lent · settled")
                     rows += Row(t, sms.id, null, sms.body, sms.channel)
@@ -570,8 +582,11 @@ class Repo(val store: Store) {
         for (m in store.manualSince(since)) {
             val parsed = ParsedSms(Template.MANUAL, Direction.DEBIT, m.amountPaise, CASH, m.note, m.day, null, m.category)
             val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(m.createdAt), zone)
-            val t = Classifier.classify(parsed, at, profile, rules)
-            rows += Row(splits["cash:${m.id}"]?.let { t.copy(splitWith = it) } ?: t, null, m.id, null, "cash")
+            var t = Classifier.classify(parsed, at, profile, rules)
+            splits["cash:${m.id}"]?.let { t = t.copy(splitWith = it) }
+            // "They paid for me": the owner's spend, and owed to that person until paid back (or marked paid).
+            if (m.owedTo != null && m.id.toString() !in settledOwed) t = t.copy(owedTo = SplitShare(m.owedTo, m.amountPaise, m.owedLabel))
+            rows += Row(t, null, m.id, null, "cash")
         }
 
         // Imported statement rows fill history from before the app; a row the SMS already covers is skipped.
@@ -618,6 +633,7 @@ class Repo(val store: Store) {
             limitsSeen = limits,
             plan = plan(),
             debts = owe.debts,
+            iOwe = owe.iOwe,
             foreign = foreign,
             tags = store.tags(),
             trips = store.trips(),
@@ -654,6 +670,31 @@ class Repo(val store: Store) {
     fun rowKey(row: Row): String? = row.smsId?.let { "sms:$it" } ?: row.manualId?.let { "cash:$it" }
 
     fun setSplit(row: Row, shares: List<SplitShare>) { rowKey(row)?.let { store.setSplit(it, shares) } }
+
+    /** "They paid for me": [name] paid [paise] for the owner (counts as the owner's spend; the owner owes them). */
+    fun addTheyPaid(day: LocalDate, paise: Long, name: String, label: String?, category: String, note: String) =
+        store.addManual(day, paise, note.ifBlank { "Paid by $name" }, category, name, label)
+
+    /** smsId -> person label for credits the owner put under a person ("paid on their behalf"). */
+    fun creditPersons(): Map<Long, String> = lines(KEY_CREDIT_PERSON).mapNotNull { l ->
+        val i = l.indexOf('|'); if (i <= 0) null else l.substring(0, i).toLongOrNull()?.let { it to l.substring(i + 1) }
+    }.toMap()
+
+    /** Put the credit [smsId] under [label] (null: back to the bank's payer name). */
+    fun assignCredit(smsId: Long, label: String?) {
+        val m = creditPersons().toMutableMap()
+        if (label == null) m.remove(smsId) else m[smsId] = label.replace('\n', ' ')
+        store.setSetting(KEY_CREDIT_PERSON, m.entries.joinToString("\n") { "${it.key}|${it.value}" })
+    }
+
+    /** Mark everything the owner owes [debt]'s person as paid (in cash, or anywhere the bank SMS can't see). */
+    fun settleIOwe(debt: Debt, rows: List<Row>) {
+        val ids = rows.filter { r ->
+            val o = r.txn.owedTo ?: return@filter false
+            r.manualId != null && ((debt.label != null && o.label == debt.label) || o.name == debt.name)
+        }.map { it.manualId!!.toString() }
+        if (ids.isNotEmpty()) store.setSetting(KEY_SETTLED_OWED, (lines(KEY_SETTLED_OWED) + ids).joinToString("\n"))
+    }
 
     /** Mark everything [debt]'s person owes as paid (in cash, or anywhere the bank SMS can't see). */
     fun settleDebt(debt: Debt, rows: List<Row>) {

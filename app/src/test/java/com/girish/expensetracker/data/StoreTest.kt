@@ -73,4 +73,51 @@ class StoreTest {
         repo.saveSourceMeta(SourceMeta(card, SourceStatus.PAST))
         assertTrue(card in repo.store.tracked())
     }
+
+    @Test fun upgradeFromV6KeepsCashEntriesAndAddsWhoPaid() {
+        context.deleteDatabase("spend.db")
+        val path = context.getDatabasePath("spend.db").apply { parentFile?.mkdirs() }
+        // A v6 database as v1.2.1 left it (only the tables this check needs; onUpgrade adds the rest only below v6).
+        android.database.sqlite.SQLiteDatabase.openOrCreateDatabase(path, null).use { db ->
+            db.execSQL("CREATE TABLE manual (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, amount INTEGER NOT NULL, note TEXT NOT NULL, category TEXT NOT NULL, created_at INTEGER NOT NULL)")
+            db.execSQL("INSERT INTO manual (day, amount, note, category, created_at) VALUES ('2026-10-01', 5000, 'Tea', 'Food', 1)")
+            db.version = 6
+        }
+        val store = Store(context)
+        val old = store.manualSince(java.time.LocalDate.of(2020, 1, 1)).single()
+        assertEquals(5000L, old.amountPaise)
+        assertEquals(null, old.owedTo)
+        store.addManual(java.time.LocalDate.of(2026, 10, 2), 30000, "Dinner", "Food", "Rakshak", "rakshak@okaxis")
+        val added = store.manualSince(java.time.LocalDate.of(2020, 1, 1)).last()
+        assertEquals("Rakshak", added.owedTo)
+        assertEquals("rakshak@okaxis", added.owedLabel)
+        store.close()
+    }
+
+    @Test fun backupKeepsWhoPaidAndRefusesNewerVersions() {
+        context.deleteDatabase("spend.db")
+        val store = Store(context)
+        store.addManual(java.time.LocalDate.of(2026, 10, 2), 30000, "Dinner", "Food", "Rakshak", null)
+        val dump = store.dump()
+        assertEquals(7, dump.getInt("version"))
+        store.restore(dump)
+        assertEquals("Rakshak", store.manualSince(java.time.LocalDate.of(2020, 1, 1)).single().owedTo)
+        val newer = org.json.JSONObject(dump.toString()).put("version", 8)
+        assertTrue(runCatching { store.restore(newer) }.exceptionOrNull() is Store.NewerBackup)
+        store.close()
+    }
+
+    @Test fun theyPaidForMeIsMySpendAndMyUpiToThemSettlesIt() {
+        context.deleteDatabase("spend.db")
+        val repo = Repo(Store(context))
+        repo.addTheyPaid(java.time.LocalDate.now(), 30000, "Rakshak", null, "Food", "")
+        val snap = repo.snapshot()
+        val row = snap.rows.single()
+        assertEquals(30000L, com.girish.expensetracker.core.Ledger.monthAmount(row.txn))
+        assertEquals(30000L, snap.iOwe.single().leftPaise)
+        repo.settleIOwe(snap.iOwe.single(), snap.rows)
+        val after = repo.snapshot()
+        assertTrue(after.iOwe.isEmpty())
+        assertEquals(30000L, com.girish.expensetracker.core.Ledger.monthAmount(after.rows.single().txn))
+    }
 }

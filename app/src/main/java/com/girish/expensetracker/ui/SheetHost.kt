@@ -44,10 +44,24 @@ internal fun SheetHost(ctl: AppController, snap: Snapshot, pickers: Pickers) {
                 },
                 onDeleteCash = { id -> ctl.act { store.deleteManual(id); "Cash entry deleted" } },
                 onSplit = { ctl.sheet = Sheet.Split(row) },
+                onAssignCredit = if (row.smsId != null && row.txn.parsed.direction == com.girish.expensetracker.core.Direction.CREDIT &&
+                    row.txn.kind in setOf(com.girish.expensetracker.core.Kind.PERSON_CREDIT, com.girish.expensetracker.core.Kind.REPAID, com.girish.expensetracker.core.Kind.INCOME)) ({ ctl.sheet = Sheet.AssignCredit(row) }) else null,
                 onShop = if (com.girish.expensetracker.core.Shops.isShopPayment(row.txn)) ({ ctl.sheet = null; ctl.page = Page.Shop(com.girish.expensetracker.core.Shops.keyOf(snap.txns, row.txn.parsed.counterparty!!)) }) else null,
                 tag = snap.tagOf(row), knownTags = (snap.tags.values + snap.trips.map { it.name }).distinct().sorted(),
                 onTag = { tag -> ctl.act(closeSheet = false) { setTag(row, tag); if (tag.isBlank()) "Tag removed" else "Tagged “${tag.trim()}”" } },
             )
+        }
+
+        is Sheet.TheyPaid -> {
+            val all = people(snap)
+            TheyPaidSheet(all, all.firstOrNull { it.key == sheet.personKey }, onDismiss = close) { day, paise, name, label, category, note ->
+                ctl.act { addTheyPaid(day, paise, name, label, category, note); "Added ${rupees(paise)} · you owe $name" }
+            }
+        }
+
+        is Sheet.AssignCredit -> AssignCreditSheet(sheet.row, people(snap), assigned = sheet.row.smsId?.let { it in ctl.repo.creditPersons() } == true, onDismiss = close) { p ->
+            val id = sheet.row.smsId ?: return@AssignCreditSheet
+            ctl.act { assignCredit(id, p?.labels?.firstOrNull()); if (p == null) "Back to the bank's payer name" else "Put under ${p.name}" }
         }
 
         Sheet.PayeeReview -> PayeeReviewSheet(snap.payeeReview, onDismiss = close) { shops, persons ->

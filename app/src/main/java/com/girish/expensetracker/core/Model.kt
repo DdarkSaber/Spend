@@ -89,11 +89,15 @@ data class Txn(
     val isSalary: Boolean = false,
     /** The other people's shares when the owner split this payment; only the owner's share counts as spend. */
     val splitWith: List<SplitShare> = emptyList(),
+    /** "They paid for me": the person who paid this (hand-entered) spend for the owner, who now owes them. */
+    val owedTo: SplitShare? = null,
+    /** The part of a payment to a person that paid back what the owner owed them: not spend. Set by [Owe]. */
+    val settlesPaise: Long = 0,
 ) {
     val day: LocalDate get() = parsed.date ?: receivedAt.toLocalDate()
     val amountPaise: Long get() = parsed.amountPaise
-    /** What this payment costs the owner: the full amount, or their share of a split. */
-    val ownPaise: Long get() = (amountPaise - splitWith.sumOf { it.sharePaise }).coerceAtLeast(0L)
+    /** What this payment costs the owner: the full amount, or their share of a split, less any part that paid a debt. */
+    val ownPaise: Long get() = (amountPaise - splitWith.sumOf { it.sharePaise } - settlesPaise).coerceAtLeast(0L)
 }
 
 /**

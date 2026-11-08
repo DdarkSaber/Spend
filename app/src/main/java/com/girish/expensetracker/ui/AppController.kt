@@ -36,6 +36,8 @@ internal sealed interface Sheet {
     data class OlderSources(val result: Repo.ArchiveResult) : Sheet
     data object AlertApps : Sheet
     data object PayeeReview : Sheet
+    data class TheyPaid(val personKey: String? = null) : Sheet
+    data class AssignCredit(val row: Row) : Sheet
 }
 
 /** Full-screen pages that sit above the tabs (back returns to the tab). */

@@ -114,6 +114,7 @@ internal fun RowSheet(
     onDeleteCash: (Long) -> Unit,
     onSplit: () -> Unit,
     onShop: (() -> Unit)? = null,
+    onAssignCredit: (() -> Unit)? = null,
     tag: String? = null,
     knownTags: List<String> = emptyList(),
     onTag: (String) -> Unit = {},
@@ -141,6 +142,18 @@ internal fun RowSheet(
                     "${x.kind.name.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }} · ${sourceLabel(x.parsed.source)} · ${x.day.format(dayMonth)}, ${x.receivedAt.toLocalTime().withSecond(0).withNano(0)}",
                     style = MaterialTheme.typography.bodyMedium, color = t.ink2,
                 )
+                onAssignCredit?.let { open ->
+                    Text(
+                        "Paid on behalf of someone? ›", style = MaterialTheme.typography.labelLarge, color = t.accent,
+                        modifier = Modifier.clickable(onClick = open).padding(vertical = 4.dp),
+                    )
+                }
+                x.owedTo?.let { o ->
+                    Text("Paid by ${o.name} · you owe them", style = MaterialTheme.typography.bodyMedium, color = t.warn, modifier = Modifier.padding(top = 4.dp))
+                }
+                if (x.settlesPaise > 0) {
+                    Text("${rupeesExact(x.settlesPaise)} of this paid back what you owed", style = MaterialTheme.typography.bodyMedium, color = t.accent, modifier = Modifier.padding(top = 4.dp))
+                }
                 if (x.splitWith.isNotEmpty()) {
                     Text(
                         "Split with ${x.splitWith.joinToString { it.name }} · your share ${rupeesExact(x.ownPaise)}",
