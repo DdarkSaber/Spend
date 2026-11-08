@@ -272,6 +272,14 @@ private const val KEY_CARD_GROUPS_DECLINED = "card_groups_declined"
 private const val KEY_CARD_OF_SMS = "card_of_sms"
 private const val KEY_CARD_OF_SHOP = "card_of_shop"
 private const val KEY_MARKED_PAID = "marked_paid"
+private const val KEY_ALERT_APPS = "alert_apps"
+
+/** Google Messages (RCS), Truecaller (Business Chat) and Gmail (bank emails, all accounts). */
+val DEFAULT_ALERT_APPS = listOf(
+    Repo.AlertApp("com.google.android.apps.messaging", "Google Messages", true),
+    Repo.AlertApp("com.truecaller", "Truecaller", true),
+    Repo.AlertApp("com.google.android.gm", "Gmail", true),
+)
 private val NL = 10.toChar().toString()
 
 class Repo(val store: Store) {
@@ -335,6 +343,45 @@ class Repo(val store: Store) {
             onProgress(done, file.items.size)
         }
         return ArchiveResult(counts.map { (ch, c) -> ArchiveCount(ch, c[0], c[1], c[2], c[3]) }, file.rejected)
+    }
+
+    // ---------------------------------------------------------------- alerts from other apps' notifications
+
+    /** An app whose notifications are read for bank alerts. */
+    data class AlertApp(val pkg: String, val label: String, val enabled: Boolean)
+
+    fun alertApps(): List<AlertApp> = store.setting(KEY_ALERT_APPS)?.split(NL)?.mapNotNull { l ->
+        l.split('|').takeIf { it.size == 3 }?.let { AlertApp(it[0], it[1], it[2] == "1") }
+    } ?: DEFAULT_ALERT_APPS
+
+    fun setAlertApps(apps: List<AlertApp>) =
+        store.setSetting(KEY_ALERT_APPS, apps.distinctBy { it.pkg }.joinToString(NL) { "${it.pkg}|${it.label.replace('|', ' ')}|${if (it.enabled) 1 else 0}" })
+
+    /** What happened to one notification text, for the audit log. */
+    data class NotifOutcome(
+        val text: String, val sender: String?, val gate: String, val decision: String, val smsId: Long?,
+        val result: ReadResult?,
+    )
+
+    /**
+     * One notification text from [pkg]: bank from the text (the title is a hint), gate, re-post and same-text checks,
+     * then stored like an SMS with channel "notif:{pkg}".
+     */
+    fun ingestNotification(pkg: String, title: String?, text: String, at: Long): NotifOutcome {
+        val channel = "notif:$pkg"
+        val hash = java.security.MessageDigest.getInstance("SHA-256").digest((pkg + "\u0000" + text).toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        if (!store.firstSeen(hash, at)) return NotifOutcome(text, null, "-", "repost", null, null)
+        val sender = com.girish.expensetracker.core.BankFromText.sender(text, title)
+            ?: return NotifOutcome(text, null, "-", "no-bank", null, null)
+        val profile = profile()
+        val learned = store.learned()
+        val gate = com.girish.expensetracker.core.NotifGate.check(sender, text, profile, learned)
+        if (!gate.pass) return NotifOutcome(text, sender, gate.reason, "gate", null, null)
+        val result = SmsReader.read(sender, text, profile, learned)
+        if (store.sameTextElsewhere(text, channel, at)) return NotifOutcome(text, sender, gate.reason, "dup-text", null, result)
+        val id = store.insertSmsId(sender, text, at, channel)
+        return NotifOutcome(text, sender, gate.reason, if (id != null) "stored" else "dup-same-channel", id, result)
     }
 
     /** Saves what the owner said about [m]'s account or card; ignoring it stops it being counted anywhere. */

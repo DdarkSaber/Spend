@@ -104,6 +104,10 @@ internal fun SheetHost(ctl: AppController, snap: Snapshot, pickers: Pickers) {
             }
         }
 
+        Sheet.AlertApps -> AlertAppsSheet(
+            ctl.repo.alertApps(), com.girish.expensetracker.notify.AlertListener.accessGranted(ctl.context), onDismiss = close,
+        ) { apps -> ctl.act { setAlertApps(apps); null } }
+
         is Sheet.SourceSettings -> SourceSheet(snap, sheet.source, onDismiss = close) { meta ->
             ctl.act { saveSourceMeta(meta); "Saved ${sourceLabel(meta.source)}" }
         }

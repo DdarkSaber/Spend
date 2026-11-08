@@ -14,6 +14,14 @@
 
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
+    <!-- "Add app" for alert apps lists installed apps that have a launcher icon. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+    </queries>
+
     <application
         android:name=".SpendApp"
         android:allowBackup="false"
@@ -41,6 +49,17 @@
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Shows today's and this month's spend in a persistent notification" />
+        </service>
+
+        <!-- Reads bank alerts from allowlisted apps (Truecaller, Gmail, Google Messages); access is granted by the owner. -->
+        <service
+            android:name=".notify.AlertListener"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
         </service>
 
         <receiver

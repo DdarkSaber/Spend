@@ -104,6 +104,7 @@ fun AppRoot(
     var snap by remember { mutableStateOf<Snapshot?>(null) }
     var tab by remember { mutableStateOf(Tab.DAYS) }
     var seenBefore by remember { mutableLongStateOf(Long.MAX_VALUE) }
+    var alertAccessOff by remember { mutableStateOf(false) }
 
     // First run: once SMS permission is granted and nothing is stored yet, import recent history automatically.
     LaunchedEffect(setup.sms) {
@@ -119,7 +120,10 @@ fun AppRoot(
         Seen.markNow(context)
     }
     LaunchedEffect(tick, ctl.reloads) {
-        snap = withContext(Dispatchers.IO) { repo.snapshot() }
+        snap = withContext(Dispatchers.IO) { repo.snapshot().also { com.girish.expensetracker.data.Audit.collapses(context, it.collapses) } }
+        alertAccessOff = withContext(Dispatchers.IO) {
+            repo.alertApps().any { it.enabled } && !com.girish.expensetracker.notify.AlertListener.accessGranted(context)
+        }
         if (setup.notifications) withContext(Dispatchers.IO) { Notifier.refresh(context) }
     }
 
@@ -158,6 +162,8 @@ fun AppRoot(
                         onCash = { ctl.sheet = Sheet.Cash }, onMore = { tab = Tab.MORE }, onReview = { ctl.sheet = Sheet.Owner },
                         onSearch = { ctl.page = Page.Search },
                         onHabits = { ctl.page = Page.Habits },
+                        alertAccessOff = alertAccessOff,
+                        onFixAlerts = { openNotificationAccess(context) },
                         onLoadDemo = if (BuildConfig.DEBUG) ({ ctl.act { "Loaded ${loadDemo()} demo bank SMS (debug build only)" } }) else null,
                     )
                     Tab.MONTH -> MonthScreen(
@@ -214,6 +220,16 @@ fun AppRoot(
                                 ctl.reload()
                             },
                             autoBackup = AutoBackup.state(context),
+                            alerts = repo.alertApps().let { apps ->
+                                val on = apps.filter { it.enabled }
+                                if (alertAccessOff) "Notification access is off" else if (on.isEmpty()) "None" else on.joinToString(", ") { it.label }
+                            },
+                            auditOn = com.girish.expensetracker.data.Audit.enabled(context),
+                            onAudit = { on ->
+                                com.girish.expensetracker.data.Audit.setEnabled(context, on)
+                                ctl.say(if (on) "Audit log on" else "Audit log off")
+                                ctl.reload()
+                            },
                         ),
                     )
                 }
@@ -269,6 +285,14 @@ private fun moreActions(ctl: AppController, s: Snapshot, pickers: Pickers, onBat
     importStatement = pickers.openCsv,
     importHistory = pickers.openArchive,
     sources = { ctl.page = Page.Sources },
+    alertApps = { ctl.sheet = Sheet.AlertApps },
+    debugBundle = {
+        ctl.act(closeSheet = false) {
+            val zip = com.girish.expensetracker.data.DebugBundle.build(ctl.context, store)
+            withContext(Dispatchers.Main) { com.girish.expensetracker.data.DebugBundle.share(ctl.context, zip) }
+            null
+        }
+    },
     exportCsv = { ctl.act(closeSheet = false) { runCatching { "Saved to " + CsvExport.export(ctl.context, s) }.getOrElse { "Couldn't save the CSV: ${it.message}" } } },
     budgets = { ctl.sheet = Sheet.Budgets },
     trips = { ctl.page = Page.Trips },

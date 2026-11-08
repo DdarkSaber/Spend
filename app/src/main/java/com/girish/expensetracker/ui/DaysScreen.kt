@@ -61,6 +61,8 @@ internal fun DaysScreen(
     onReview: () -> Unit = {},
     onSearch: () -> Unit = {},
     onHabits: () -> Unit = {},
+    alertAccessOff: Boolean = false,
+    onFixAlerts: () -> Unit = {},
 ) {
     val t = LocalTones.current
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -97,6 +99,14 @@ internal fun DaysScreen(
             }
         }
         snap.owner?.takeIf { it.state == "detected" && snap.rows.isNotEmpty() }?.let { o -> item { ReviewSetupCard(o, onReview) } }
+        if (alertAccessOff) item {
+            Panel {
+                PanelHeader("Notification access is off")
+                Text("Bank alerts that come only through Truecaller, RCS or email are being missed.", style = MaterialTheme.typography.bodyMedium, color = t.ink2)
+                Gap(10.dp)
+                PrimaryButton("Turn on", onFixAlerts)
+            }
+        }
         if (snap.unusual.isNotEmpty()) item { WorthALookPanel(snap.unusual) }
         item { Segmented(listOf("7 Days", "Month", "4 Months"), range, { range = it }) }
         if (snap.rows.isEmpty()) {

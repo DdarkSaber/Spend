@@ -2,6 +2,9 @@ package com.girish.expensetracker.ui
 
 import androidx.compose.material.icons.outlined.EmojiEvents
 import androidx.compose.material.icons.outlined.AccountBalance
+import androidx.compose.material.icons.outlined.NotificationsActive
+import androidx.compose.material.icons.outlined.ReceiptLong
+import androidx.compose.material.icons.outlined.BugReport
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.LocalFireDepartment
 import androidx.compose.foundation.background
@@ -77,6 +80,8 @@ internal class MoreActions(
     val year: () -> Unit,
     val editCardGroup: (com.girish.expensetracker.core.CardHealth) -> Unit = {},
     val askCardGroupsAgain: (String) -> Unit = {},
+    val alertApps: () -> Unit = {},
+    val debugBundle: () -> Unit = {},
 )
 
 /** Switches and their current values. */
@@ -88,6 +93,9 @@ internal class MoreSettings(
     val digestOn: Boolean,
     val onDigest: (Boolean) -> Unit,
     val autoBackup: AutoBackup.State,
+    val alerts: String = "",
+    val auditOn: Boolean = false,
+    val onAudit: (Boolean) -> Unit = {},
 )
 
 @Composable
@@ -146,6 +154,16 @@ internal fun MoreScreen(snap: Snapshot, setup: Setup, isNew: (Row) -> Boolean, o
                 )
                 Hairline()
                 Action(Icons.Outlined.EmojiEvents, "Your year", "Last 12 salary months in one page, shareable", actions.year)
+            }
+        }
+
+        item {
+            Section("Alerts from other apps") {
+                Action(Icons.Outlined.NotificationsActive, "Alert apps", settings.alerts, actions.alertApps)
+                Hairline()
+                Toggle(Icons.Outlined.ReceiptLong, "Audit log", "Records every alert for the validation week", settings.auditOn, settings.onAudit)
+                Hairline()
+                Action(Icons.Outlined.BugReport, "Export debug bundle", "Audit log + database, to share yourself", actions.debugBundle)
             }
         }
 

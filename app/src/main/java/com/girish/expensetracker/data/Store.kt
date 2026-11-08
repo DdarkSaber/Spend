@@ -118,6 +118,24 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, STOR
         writableDatabase.insertWithOnConflict("source_meta", null, v, SQLiteDatabase.CONFLICT_REPLACE)
     }
 
+    /** True the first time [hash] is seen in 7 days (notifications are re-posted on every update); prunes older ones. */
+    fun firstSeen(hash: String, at: Long): Boolean {
+        val db = writableDatabase
+        db.delete("notif_seen", "at < ?", arrayOf((at - 7 * 24 * 3600_000L).toString()))
+        val v = ContentValues().apply { put("hash", hash); put("at", at) }
+        return db.insertWithOnConflict("notif_seen", null, v, SQLiteDatabase.CONFLICT_IGNORE) != -1L
+    }
+
+    /** True when an alert with the same normalized text came on another channel within 24 hours. */
+    fun sameTextElsewhere(body: String, channel: String, at: Long): Boolean {
+        val norm = com.girish.expensetracker.core.SameText.normalize(body)
+        val day = com.girish.expensetracker.core.SameText.CROSS_CHANNEL_MS
+        return readableDatabase.rawQuery(
+            "SELECT body FROM sms WHERE received_at > ? AND received_at < ? AND channel != ?",
+            arrayOf((at - day).toString(), (at + day).toString(), channel),
+        ).use { c -> generateSequence { if (c.moveToNext()) c.getString(0) else null }.any { com.girish.expensetracker.core.SameText.normalize(it) == norm } }
+    }
+
     /** Bumped whenever SMS ids may have changed meaning (a restore), so in-memory caches start over. */
     @Volatile var generation = 0
         private set
