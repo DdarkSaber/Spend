@@ -22,31 +22,57 @@ object Dedupe {
         Template.HDFC_ACH_UPDATE, Template.HDFC_ACH_ALERT,
     )
 
-    private class Entry(var txn: Txn, val templates: MutableSet<Template>)
+    private class Entry(val index: Int, var txn: Txn, val templates: MutableSet<Template>)
 
+    private data class RefKey(val template: Template, val ref: String)
+    private data class FamilyKey(val family: Int, val source: Source, val amountPaise: Long, val day: LocalDate)
+
+    /**
+     * O(n): hash maps instead of scanning everything kept so far. Same result as the original scan, in the same order:
+     * a family partner is the earliest kept SMS of the family that does not already have this layout.
+     */
     fun apply(txns: List<Txn>): List<Txn> {
-        val kept = mutableListOf<Entry>()
+        val kept = ArrayList<Entry>(txns.size)
+        // (layout, bank reference) of every kept payment's current SMS, counted (two kept payments may share one).
+        val refs = HashMap<RefKey, Int>()
+        val byFamily = HashMap<FamilyKey, MutableList<Entry>>()
+        fun countRef(t: Txn, delta: Int) {
+            val ref = t.parsed.ref ?: return
+            refs.merge(RefKey(t.parsed.template, ref), delta) { a, b -> (a + b).takeIf { it != 0 } }
+        }
         for (t in txns) {
             val p = t.parsed
             // Same SMS delivered twice (same layout, same bank reference).
-            if (p.ref != null && kept.any { it.txn.parsed.template == p.template && it.txn.parsed.ref == p.ref }) continue
+            if (p.ref != null && refs.containsKey(RefKey(p.template, p.ref))) continue
 
-            val family = families.firstOrNull { p.template in it }
-            val partner = family?.let { fam ->
-                kept.firstOrNull { e ->
-                    e.txn.parsed.template in fam && p.template !in e.templates &&
-                        e.txn.parsed.source == p.source && e.txn.amountPaise == t.amountPaise && e.txn.day == t.day
-                }
-            }
+            val familyIndex = familyOf[p.template]
+            val fKey = familyIndex?.let { FamilyKey(it, p.source, t.amountPaise, t.day) }
+            val partner = fKey?.let { k -> byFamily[k]?.firstOrNull { p.template !in it.templates } }
             if (partner == null) {
-                kept += Entry(t, mutableSetOf(p.template))
+                val e = Entry(kept.size, t, mutableSetOf(p.template))
+                kept += e
+                countRef(t, 1)
+                if (fKey != null) byFamily.getOrPut(fKey) { mutableListOf() } += e
             } else {
                 partner.templates += p.template
+                countRef(partner.txn, -1)
                 partner.txn = better(partner.txn, t)
+                countRef(partner.txn, 1)
+                // The kept SMS can take an earlier time and so, without a printed date, an earlier day: file it there,
+                // still in kept order, so later partners are found exactly as a full scan would find them.
+                val newKey = fKey!!.copy(day = partner.txn.day)
+                if (newKey != fKey) {
+                    byFamily[fKey]?.remove(partner)
+                    val list = byFamily.getOrPut(newKey) { mutableListOf() }
+                    val at = list.indexOfFirst { it.index > partner.index }
+                    if (at < 0) list += partner else list.add(at, partner)
+                }
             }
         }
         return kept.map { it.txn }
     }
+
+    private val familyOf: Map<Template, Int> = buildMap { families.forEachIndexed { i, f -> f.forEach { put(it, i) } } }
 
     private fun better(a: Txn, b: Txn): Txn {
         val winner = if (preference.indexOf(b.parsed.template) < preference.indexOf(a.parsed.template)) b else a

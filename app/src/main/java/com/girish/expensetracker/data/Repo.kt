@@ -357,13 +357,10 @@ class Repo(val store: Store) {
         val statements = mutableListOf<CardStatement>()
         val limits = mutableListOf<LimitSeen>()
 
-        // Older installs may hold the same SMS twice (live + import, slightly different stamps): read it once.
-        val lastSeen = HashMap<String, Long>()
-        for (sms in store.smsSince(sinceMillis)) {
-            val dupKey = sms.sender + "\u0000" + sms.body
-            val prev = lastSeen[dupKey]
-            lastSeen[dupKey] = sms.receivedAt
-            if (prev != null && kotlin.math.abs(sms.receivedAt - prev) < 600_000L) continue
+        // Level 0: the same alert stored twice (live + import with slightly different stamps, or an SMS and its
+        // notification copy) is read once.
+        val alerts = com.girish.expensetracker.core.SameText.keep(store.smsSince(sinceMillis), { it.sender }, { it.body }, { it.receivedAt }, { it.channel })
+        for (sms in alerts) {
             val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(sms.receivedAt), zone)
             // Reading an SMS is the slow part, and its result only changes when the owner's cards or taught layouts do.
             val read = readings[sms.id] ?: com.girish.expensetracker.core.Reading(
@@ -415,12 +412,12 @@ class Repo(val store: Store) {
         }
 
         // Imported statement rows fill history from before the app; a row the SMS already covers is skipped.
-        val fromSms = rows.toList()
+        // (source, amount) -> days with such a payment, so each row is checked in O(1) instead of against every SMS.
+        val smsDays = HashMap<Pair<Source, Long>, MutableSet<LocalDate>>()
+        for (r in rows) smsDays.getOrPut(r.txn.parsed.source to r.txn.amountPaise) { HashSet() } += r.txn.day
         for ((source, s) in store.statementRowsSince(since)) {
-            val covered = fromSms.any { r ->
-                r.txn.parsed.source == source && r.txn.amountPaise == s.amountPaise &&
-                    kotlin.math.abs(java.time.temporal.ChronoUnit.DAYS.between(r.txn.day, s.day)) <= 2
-            }
+            // Covered when an SMS for the same source and amount is within 2 days.
+            val covered = smsDays[source to s.amountPaise]?.let { days -> (-2L..2L).any { s.day.plusDays(it) in days } } == true
             if (covered) continue
             val dir = if (s.debit) Direction.DEBIT else Direction.CREDIT
             val other = com.girish.expensetracker.core.StatementCsv.payee(s.description, s.debit)
