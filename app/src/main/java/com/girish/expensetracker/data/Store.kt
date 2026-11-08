@@ -14,7 +14,13 @@ import com.girish.expensetracker.core.Trip
 import com.girish.expensetracker.core.ruleKey
 import java.time.LocalDate
 
-data class RawSms(val id: Long, val sender: String, val body: String, val receivedAt: Long)
+/** [channel] is where the alert came from: "sms", "notif:{package}" or "archive:{name}". */
+data class RawSms(val id: Long, val sender: String, val body: String, val receivedAt: Long, val channel: String = CHANNEL_SMS)
+
+const val CHANNEL_SMS = "sms"
+
+/** Database schema version; a backup from a newer schema is refused. */
+const val STORE_VERSION = 6
 data class ManualEntry(val id: Long, val day: LocalDate, val amountPaise: Long, val note: String, val category: String, val createdAt: Long)
 data class StatementRow(val day: LocalDate, val amountPaise: Long, val debit: Boolean, val description: String)
 
@@ -22,12 +28,12 @@ data class StatementRow(val day: LocalDate, val amountPaise: Long, val debit: Bo
  * The database keeps only raw inputs: bank SMS exactly as received, the user's retags, cash entries and extra tracked cards.
  * Everything else (kinds, categories, totals) is recomputed from these, so a parser fix also fixes old history.
  */
-class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, 5) {
+class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, STORE_VERSION) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
             "CREATE TABLE sms (id INTEGER PRIMARY KEY AUTOINCREMENT, sender TEXT NOT NULL, body TEXT NOT NULL, " +
-                "received_at INTEGER NOT NULL, UNIQUE(sender, body, received_at))"
+                "received_at INTEGER NOT NULL, channel TEXT NOT NULL DEFAULT 'sms', UNIQUE(sender, body, received_at))"
         )
         db.execSQL("CREATE INDEX sms_time ON sms(received_at)")
         db.execSQL("CREATE TABLE rule (name TEXT PRIMARY KEY, type TEXT NOT NULL, category TEXT NOT NULL)")
@@ -40,6 +46,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, 5) {
         createOverrides(db)
         createStatementRows(db)
         createV5(db)
+        createV6(db)
     }
 
     // v2 adds owner settings; nothing existing is touched, so an upgrade keeps every stored SMS, retag and cash entry.
@@ -48,6 +55,51 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, 5) {
         if (oldVersion < 3) createOverrides(db)
         if (oldVersion < 4) createStatementRows(db)
         if (oldVersion < 5) createV5(db)
+        if (oldVersion < 6) {
+            db.execSQL("ALTER TABLE sms ADD COLUMN channel TEXT NOT NULL DEFAULT 'sms'")
+            createV6(db)
+        }
+    }
+
+    /**
+     * v6: where each alert came from (channel), a cache of how each one was read, what the owner said about each
+     * account or card (past, add-on, linked debit card, group), and recently seen notifications.
+     */
+    private fun createV6(db: SQLiteDatabase) {
+        db.execSQL("CREATE INDEX IF NOT EXISTS sms_channel ON sms(channel)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS parsed (sms_id INTEGER PRIMARY KEY, version INTEGER NOT NULL, result TEXT NOT NULL)")
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS source_meta (bank TEXT NOT NULL, last4 TEXT NOT NULL, type TEXT NOT NULL, " +
+                "status TEXT NOT NULL DEFAULT 'auto', owner TEXT NOT NULL DEFAULT 'mine', " +
+                "linked_to TEXT, card_group TEXT, label TEXT, PRIMARY KEY(bank, last4, type))"
+        )
+        db.execSQL("CREATE TABLE IF NOT EXISTS notif_seen (hash TEXT PRIMARY KEY, at INTEGER NOT NULL)")
+    }
+
+    /** Bumped whenever SMS ids may have changed meaning (a restore), so in-memory caches start over. */
+    @Volatile var generation = 0
+        private set
+
+    /** Cached readings made with parser [version], by SMS id. */
+    fun parsedCache(version: Long): Map<Long, String> =
+        readableDatabase.rawQuery("SELECT sms_id, result FROM parsed WHERE version = ?", arrayOf(version.toString())).use { c ->
+            HashMap<Long, String>(c.count * 2).apply { while (c.moveToNext()) put(c.getLong(0), c.getString(1)) }
+        }
+
+    /** Saves new readings; readings made with any other version are dropped. */
+    fun saveParsed(version: Long, results: Map<Long, String>) {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            db.delete("parsed", "version != ?", arrayOf(version.toString()))
+            val st = db.compileStatement("INSERT OR REPLACE INTO parsed (sms_id, version, result) VALUES (?, ?, ?)")
+            for ((id, r) in results) {
+                st.clearBindings(); st.bindLong(1, id); st.bindLong(2, version); st.bindString(3, r); st.executeInsert()
+            }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
+        }
     }
 
     /** v4: rows imported from a bank statement file, and split payments. */
@@ -165,11 +217,14 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, 5) {
         })
     }
 
-    private val tables = listOf("sms", "rule", "manual", "tracked", "settings", "override", "stmt", "split", "trip", "tag", "learned")
+    // The parse cache is left out: it is rebuilt from the SMS, and a restore clears it.
+    private val tables = listOf("sms", "rule", "manual", "tracked", "settings", "override", "stmt", "split", "trip", "tag", "learned", "source_meta", "notif_seen")
+
+    class NewerBackup : Exception("This backup is from a newer version of Spend. Update the app first.")
 
     /** Every table as JSON rows, for an encrypted backup. */
     fun dump(): org.json.JSONObject = org.json.JSONObject().apply {
-        put("version", 4)
+        put("version", STORE_VERSION)
         for (table in tables) {
             val rows = org.json.JSONArray()
             readableDatabase.rawQuery("SELECT * FROM $table", null).use { c ->
@@ -191,9 +246,11 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, 5) {
 
     /** Replaces everything with a backup's contents, all or nothing. */
     fun restore(backup: org.json.JSONObject) {
+        if (backup.optInt("version", 0) > STORE_VERSION) throw NewerBackup()
         val db = writableDatabase
         db.beginTransaction()
         try {
+            db.delete("parsed", null, null)
             for (table in tables) {
                 val rows = backup.optJSONArray(table) ?: continue
                 db.delete(table, null, null)
@@ -213,6 +270,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, 5) {
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
+            generation++
         }
     }
 
@@ -261,30 +319,32 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, 5) {
     }
 
     /** Returns false if this exact SMS was already stored (import and live receiver can both see it). */
-    fun insertSms(sender: String, body: String, receivedAt: Long): Boolean = insertSmsId(sender, body, receivedAt) != null
+    fun insertSms(sender: String, body: String, receivedAt: Long, channel: String = CHANNEL_SMS): Boolean = insertSmsId(sender, body, receivedAt, channel) != null
 
     /** The new row's id, or null when this exact SMS was already stored. */
-    fun insertSmsId(sender: String, body: String, receivedAt: Long): Long? {
+    fun insertSmsId(sender: String, body: String, receivedAt: Long, channel: String = CHANNEL_SMS): Long? {
         // The live receiver and the inbox import stamp the same SMS a little differently; within 10 minutes it is one message.
+        // A range on received_at (not ABS) lets SQLite use the time index, so a big import stays fast.
         val seen = readableDatabase.rawQuery(
-            "SELECT 1 FROM sms WHERE sender = ? AND body = ? AND ABS(received_at - ?) < 600000 LIMIT 1",
-            arrayOf(sender, body, receivedAt.toString()),
+            "SELECT 1 FROM sms WHERE received_at > ? AND received_at < ? AND sender = ? AND body = ? AND channel = ? LIMIT 1",
+            arrayOf((receivedAt - 600_000L).toString(), (receivedAt + 600_000L).toString(), sender, body, channel),
         ).use { it.moveToFirst() }
         if (seen) return null
         val v = ContentValues().apply {
             put("sender", sender)
             put("body", body)
             put("received_at", receivedAt)
+            put("channel", channel)
         }
         return writableDatabase.insertWithOnConflict("sms", null, v, SQLiteDatabase.CONFLICT_IGNORE).takeIf { it != -1L }
     }
 
     fun smsSince(sinceMillis: Long): List<RawSms> =
         readableDatabase.rawQuery(
-            "SELECT id, sender, body, received_at FROM sms WHERE received_at >= ? ORDER BY received_at, id",
+            "SELECT id, sender, body, received_at, channel FROM sms WHERE received_at >= ? ORDER BY received_at, id",
             arrayOf(sinceMillis.toString()),
         ).use { c ->
-            buildList { while (c.moveToNext()) add(RawSms(c.getLong(0), c.getString(1), c.getString(2), c.getLong(3))) }
+            buildList { while (c.moveToNext()) add(RawSms(c.getLong(0), c.getString(1), c.getString(2), c.getLong(3), c.getString(4))) }
         }
 
     fun smsCount(): Long = readableDatabase.compileStatement("SELECT COUNT(*) FROM sms").simpleQueryForLong()
