@@ -64,4 +64,20 @@ class TxnCardTest {
         // Other banks need the digits.
         assertNull(TxnCard.rebuild(listOf("₹99", "•  HDFC BANK  •  Shop"), "₹99", day))
     }
+
+    /** Truecaller shows direction only by the amount's colour. */
+    @Test fun amountColourDecidesDirection() {
+        assertEquals(Direction.DEBIT, TxnCard.directionOf(0xFFF26B3A.toInt()))  // orange, as on the phone
+        assertEquals(Direction.DEBIT, TxnCard.directionOf(0xFFE53935.toInt()))  // red
+        assertEquals(Direction.CREDIT, TxnCard.directionOf(0xFF2E7D32.toInt())) // green
+        assertEquals(Direction.CREDIT, TxnCard.directionOf(0xFF4CAF50.toInt()))
+        assertNull(TxnCard.directionOf(0xFFFFFFFF.toInt()))                      // white text: unknown
+        assertNull(TxnCard.directionOf(0xFF9E9E9E.toInt()))                      // grey
+        val parts = listOf("₹1,455.14", "•  SBI CARDS  •  Somefoodlimited")
+        // Green (money in): never counted as a spend.
+        assertNull(TxnCard.rebuild(parts, "₹1,455.14", day, amountColor = 0xFF2E7D32.toInt()))
+        // Red/orange or unknown: a spend, as before.
+        assertTrue(TxnCard.rebuild(parts, "₹1,455.14", day, amountColor = 0xFFF26B3A.toInt())!!.startsWith("Rs.1455.14 spent"))
+        assertTrue(TxnCard.rebuild(parts, "₹1,455.14", day, amountColor = null) != null)
+    }
 }

@@ -33,7 +33,11 @@ class AlertListener : NotificationListenerService() {
         val hint = listOf(Notification.EXTRA_SUB_TEXT, Notification.EXTRA_SUMMARY_TEXT, Notification.EXTRA_INFO_TEXT, Notification.EXTRA_CONVERSATION_TITLE, Notification.EXTRA_TITLE_BIG)
             .mapNotNull { extras.getCharSequence(it)?.toString()?.trim()?.takeIf(String::isNotEmpty) }.distinct()
         // Apps that draw their own card (Truecaller's transaction card) keep the merchant and amount only in the layout.
-        val drawn = if (pkg == TRUECALLER) runCatching { viewTexts(n) }.getOrDefault(emptyList()) else emptyList()
+        val drawnViews = if (pkg == TRUECALLER) runCatching { viewTexts(n) }.getOrDefault(emptyList()) else emptyList()
+        val drawn = drawnViews.map { it.first }
+        // The amount's colour is the only sign of direction on Truecaller's card: from the text's own colour span, else the drawn view.
+        val amountColor = if (pkg == TRUECALLER) (listOfNotNull(extras.getCharSequence(Notification.EXTRA_TITLE), extras.getCharSequence(Notification.EXTRA_TEXT))
+            .firstNotNullOfOrNull { spanColor(it) } ?: drawnViews.firstOrNull { (t, c) -> c != null && moneyText.containsMatchIn(t) }?.second) else null
         val summary = n.flags and Notification.FLAG_GROUP_SUMMARY != 0
         val ongoing = n.flags and Notification.FLAG_ONGOING_EVENT != 0
         val at = sbn.postTime
@@ -47,7 +51,7 @@ class AlertListener : NotificationListenerService() {
                 val candidates = (if (pkg == GMAIL) listOf(big ?: text) else listOf(big ?: text) + lines + messages)
                     .filterNotNull().map { it.trim() }.filter { it.isNotEmpty() }.distinct()
                 val titleHint = (listOfNotNull(title) + hint).joinToString(" · ").ifEmpty { null }
-                val extrasDump = (hint + drawn).joinToString(" | ")
+                val extrasDump = (hint + drawn).joinToString(" | ") + (amountColor?.let { " | color=#%08X".format(it) } ?: "")
                 var stored = emptyList<Long>()
                 var passed = false
                 for (c in candidates) {
@@ -59,7 +63,7 @@ class AlertListener : NotificationListenerService() {
                 // Nothing read as an alert: try it as a transaction card (merchant + amount + "Credit Card xx4415").
                 if (!passed) {
                     val day = java.time.Instant.ofEpochMilli(at).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
-                    com.girish.expensetracker.core.TxnCard.rebuild(listOfNotNull(title, text, big) + lines + messages + drawn, titleHint, day)?.let { rebuilt ->
+                    com.girish.expensetracker.core.TxnCard.rebuild(listOfNotNull(title, text, big) + lines + messages + drawn, titleHint, day, amountColor)?.let { rebuilt ->
                         val o = repo.ingestNotification(pkg, titleHint, rebuilt, at)
                         Audit.notification(this, pkg, title, text, big, o, "card:$extrasDump")
                         o.smsId?.let { stored = stored + it }
@@ -85,10 +89,12 @@ class AlertListener : NotificationListenerService() {
     }
 
     /** Every text drawn in the notification's own layout (big view first), read by inflating it off screen. */
-    private fun viewTexts(n: Notification): List<String> {
-        val out = LinkedHashSet<String>()
+    private fun viewTexts(n: Notification): List<Pair<String, Int?>> {
+        val out = LinkedHashMap<String, Int?>()
         fun walk(v: android.view.View) {
-            if (v is android.widget.TextView) v.text?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let(out::add)
+            if (v is android.widget.TextView) v.text?.let { cs ->
+                cs.toString().trim().takeIf { it.isNotEmpty() }?.let { out.putIfAbsent(it, spanColor(cs) ?: v.currentTextColor) }
+            }
             if (v is android.view.ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i))
         }
         @Suppress("DEPRECATION")
@@ -97,6 +103,15 @@ class AlertListener : NotificationListenerService() {
         }
         return out.toList()
     }
+
+    /** The colour a styled text paints its amount in (a ForegroundColorSpan), if any. */
+    private fun spanColor(cs: CharSequence): Int? {
+        val s = cs as? android.text.Spanned ?: return null
+        return s.getSpans(0, s.length, android.text.style.ForegroundColorSpan::class.java)
+            .firstOrNull { span -> moneyText.containsMatchIn(s.subSequence(s.getSpanStart(span), s.getSpanEnd(span))) }?.foregroundColor
+    }
+
+    private val moneyText = Regex("(?:₹|Rs\\.?|INR)\\s*[\\d,]")
 
     companion object {
         const val GMAIL = "com.google.android.gm"

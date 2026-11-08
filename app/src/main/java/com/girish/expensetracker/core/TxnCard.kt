@@ -18,13 +18,36 @@ object TxnCard {
     private val sentence = Regex("\\b(spent|debited|charged|purchase|txn|transaction)\\b", I)
     private val ddMMyy = DateTimeFormatter.ofPattern("dd/MM/yy")
 
+    /** Red or orange -> money out, green -> money in, anything else (grey, white, unknown) -> null. */
+    fun directionOf(argb: Int): Direction? {
+        val r = (argb shr 16 and 0xFF) / 255f
+        val g = (argb shr 8 and 0xFF) / 255f
+        val b = (argb and 0xFF) / 255f
+        val max = maxOf(r, g, b)
+        val min = minOf(r, g, b)
+        val d = max - min
+        if (max < 0.2f || d / max < 0.35f) return null // too dark or too grey to tell
+        val hue = when (max) {
+            r -> 60f * (((g - b) / d) % 6f)
+            g -> 60f * ((b - r) / d + 2f)
+            else -> 60f * ((r - g) / d + 4f)
+        }.let { if (it < 0) it + 360f else it }
+        return when {
+            hue < 45f || hue >= 330f -> Direction.DEBIT
+            hue in 80f..170f -> Direction.CREDIT
+            else -> null
+        }
+    }
+
     private val bankNames = mapOf("SBICRD" to "SBI", "HDFCBK" to "HDFC Bank", "ICICIT" to "ICICI Bank", "DCBANK" to "DCB Bank")
 
     /**
      * [parts] are the notification's texts (title, text, lines, texts drawn in its layout); [hint] the header/sub text.
      * Returns the rebuilt SMS sentence, or null when this is not a card spend.
      */
-    fun rebuild(parts: List<String>, hint: String?, day: LocalDate): String? {
+    fun rebuild(parts: List<String>, hint: String?, day: LocalDate, amountColor: Int? = null): String? {
+        // Truecaller shows direction only by colour: red/orange = money out, green = money in.
+        if (amountColor != null && directionOf(amountColor) == Direction.CREDIT) return null
         val all = parts.joinToString(" \n ")
         if (moneyIn.containsMatchIn(all) || sentence.containsMatchIn(all)) return null
         val amt = amount.findAll(all).map { it.groupValues[1] }.distinct().toList().singleOrNull() ?: return null
