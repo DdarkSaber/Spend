@@ -1,6 +1,8 @@
 package com.girish.expensetracker.ui
 
 import androidx.compose.material.icons.outlined.EmojiEvents
+import androidx.compose.material.icons.outlined.AccountBalance
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.LocalFireDepartment
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -60,6 +62,8 @@ internal class MoreActions(
     val addCash: () -> Unit,
     val importSms: () -> Unit,
     val importStatement: () -> Unit,
+    val importHistory: () -> Unit,
+    val sources: () -> Unit,
     val exportCsv: () -> Unit,
     val budgets: () -> Unit,
     val trips: () -> Unit,
@@ -99,6 +103,8 @@ internal fun MoreScreen(snap: Snapshot, setup: Setup, isNew: (Row) -> Boolean, o
         item {
             Section("Your money") {
                 Action(Icons.Outlined.CreditCard, "Accounts, name & salary day", "What the app learned from your SMS", actions.reviewSetup)
+                Hairline()
+                Action(Icons.Outlined.AccountBalance, "Cards and accounts", "Active, past and ignored · add-on and debit cards", actions.sources)
                 Hairline()
                 Action(Icons.Outlined.Savings, "Budgets", "Monthly and per category, with alerts", actions.budgets)
                 Hairline()
@@ -156,6 +162,8 @@ internal fun MoreScreen(snap: Snapshot, setup: Setup, isNew: (Row) -> Boolean, o
         item {
             Section("Data") {
                 Action(Icons.Outlined.Sms, "Import SMS history", "Re-reads your whole SMS inbox", actions.importSms)
+                Hairline()
+                Action(Icons.Outlined.History, "Import history file", "One-time history export (.jsonl)", actions.importHistory)
                 Hairline()
                 Action(Icons.Outlined.UploadFile, "Import bank statement (CSV)", "History from before the app", actions.importStatement)
                 Hairline()

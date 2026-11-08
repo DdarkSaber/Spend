@@ -92,13 +92,13 @@ private fun FloatingNav(tab: Tab, onTab: (Tab) -> Unit, modifier: Modifier = Mod
 
 /** Thin strip at the top while the whole SMS inbox is being imported. */
 @Composable
-internal fun ImportBanner(done: Int, total: Int) {
+internal fun ImportBanner(what: String, done: Int, total: Int) {
     val t = LocalTones.current
     Column(
         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).clip(RoundedCornerShape(12.dp))
             .background(t.panel).border(1.dp, t.hairline, RoundedCornerShape(12.dp)).padding(12.dp),
     ) {
-        Text("Importing SMS history… $done of $total", style = MaterialTheme.typography.labelLarge, color = t.ink)
+        Text("$what… $done of $total", style = MaterialTheme.typography.labelLarge, color = t.ink)
         androidx.compose.material3.LinearProgressIndicator(
             progress = { if (total > 0) done.toFloat() / total else 0f },
             modifier = Modifier.fillMaxWidth().padding(top = 8.dp), color = t.accent, trackColor = t.section,

@@ -139,7 +139,7 @@ fun AppRoot(
 
     androidx.activity.compose.BackHandler(enabled = ctl.page != null) { ctl.page = null }
     androidx.activity.compose.BackHandler(enabled = ctl.page == null && tab != Tab.DAYS) { tab = Tab.DAYS }
-    SpendShell(tab = tab, onTab = { tab = it; ctl.page = null }, showNav = setup.ready, snackbar = snackbar, fab = null, banner = ctl.importing?.let { { ImportBanner(it.first, it.second) } }) {
+    SpendShell(tab = tab, onTab = { tab = it; ctl.page = null }, showNav = setup.ready, snackbar = snackbar, fab = null, banner = ctl.importing?.let { { ImportBanner(it.first, it.second, it.third) } }) {
         val s = snap
         when {
             !setup.ready -> SetupScreen(setup, onRequestPermissions, onOpenAppSettings, onOpenBatterySettings)
@@ -233,6 +233,7 @@ private fun PageHost(ctl: AppController, s: Snapshot, isNew: (Row) -> Boolean, o
             val tones = LocalTones.current
             YearScreen(s, onBack = { ctl.page = null }, onShare = { runCatching { shareYear(ctl.context, s, tones) }.onFailure { ctl.say("Couldn't share: ${it.message}") } })
         }
+        Page.Sources -> SourcesScreen(s, onBack = { ctl.page = null }, onSource = { ctl.sheet = Sheet.SourceSettings(it) })
         Page.Trips -> TripsScreen(
             s, isNew, onBack = { ctl.page = null }, onNew = { ctl.sheet = Sheet.NewTrip },
             onDelete = { trip -> ctl.act { store.deleteTrip(trip.id); "Deleted ${trip.name}" } }, onRow = openRow,
@@ -266,6 +267,8 @@ private fun moreActions(ctl: AppController, s: Snapshot, pickers: Pickers, onBat
         }
     },
     importStatement = pickers.openCsv,
+    importHistory = pickers.openArchive,
+    sources = { ctl.page = Page.Sources },
     exportCsv = { ctl.act(closeSheet = false) { runCatching { "Saved to " + CsvExport.export(ctl.context, s) }.getOrElse { "Couldn't save the CSV: ${it.message}" } } },
     budgets = { ctl.sheet = Sheet.Budgets },
     trips = { ctl.page = Page.Trips },

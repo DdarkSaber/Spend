@@ -28,6 +28,8 @@ internal class Pickers(
     /** Ask for a file once, remember it, and back up there every week. */
     val startAutoBackup: (CharArray) -> Unit,
     val openCsv: () -> Unit,
+    /** Pick the one-time history file (.jsonl) and import it. */
+    val openArchive: () -> Unit,
 )
 
 @Composable
@@ -90,6 +92,23 @@ internal fun rememberPickers(ctl: AppController): Pickers {
         }
     }
 
+    val archiveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        ctl.act {
+            val file = runCatching {
+                ctl.context.contentResolver.openInputStream(uri)!!.bufferedReader().use { com.girish.expensetracker.core.Archive.parse(it.readLines()) }
+            }.getOrElse { return@act "Couldn't read that file: ${it.message}" }
+            file.problem?.let { return@act it }
+            val result = try {
+                importArchive(file) { done, total -> ctl.importProgress("Importing history file", done, total) }
+            } finally {
+                ctl.importDone()
+            }
+            ctl.sheet = Sheet.OlderSources(result)
+            null
+        }
+    }
+
     return remember {
         Pickers(
             pickContact = { contactLauncher.launch(null) },
@@ -99,6 +118,7 @@ internal fun rememberPickers(ctl: AppController): Pickers {
             restoreBackup = { pw -> password = pw; restoreLauncher.launch(arrayOf("*/*")) },
             startAutoBackup = { pw -> password = pw; autoLauncher.launch("spend-auto-backup.spendbackup") },
             openCsv = { csvLauncher.launch(arrayOf("text/*", "application/vnd.ms-excel", "application/octet-stream")) },
+            openArchive = { archiveLauncher.launch(arrayOf("*/*")) },
         )
     }
 }

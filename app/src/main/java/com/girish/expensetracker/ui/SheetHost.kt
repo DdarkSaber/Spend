@@ -104,6 +104,23 @@ internal fun SheetHost(ctl: AppController, snap: Snapshot, pickers: Pickers) {
             }
         }
 
+        is Sheet.SourceSettings -> SourceSheet(snap, sheet.source, onDismiss = close) { meta ->
+            ctl.act { saveSourceMeta(meta); "Saved ${sourceLabel(meta.source)}" }
+        }
+
+        is Sheet.OlderSources -> OlderSourcesSheet(snap, sheet.result, onDismiss = close) { keep, drop, oneAccount, separate ->
+            ctl.act {
+                keepOlderSources(keep, drop)
+                oneAccount.forEach { g -> saveCardGroup(null, g.bank, g.cards, true) }
+                separate.forEach { declineCardGroup(it) }
+                listOfNotNull(
+                    if (keep.isNotEmpty()) "Kept ${count(keep.size, "older card")}" else null,
+                    if (drop.isNotEmpty()) "ignored ${drop.size}" else null,
+                    if (oneAccount.isNotEmpty()) "grouped ${oneAccount.joinToString { it.bank }} cards" else null,
+                ).joinToString(", ").ifEmpty { "Done" }
+            }
+        }
+
         is Sheet.ImportCsv -> {
             val sources = snap.owner?.tracked?.filter { it.last4 != "*" }?.sortedBy { sourceLabel(it) }.orEmpty()
             ImportSheet(sheet.result.rows.size, sheet.result.skipped, sources, onDismiss = close) { src ->
