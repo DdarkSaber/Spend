@@ -63,7 +63,13 @@ import java.time.ZoneId
 val CASH = Source("CASH", "CASH", SourceType.ACCOUNT)
 
 /** A transaction plus where it came from, so the UI can retag it or delete a cash entry. */
-data class Row(val txn: Txn, val smsId: Long?, val manualId: Long?, val rawBody: String?)
+data class Row(
+    val txn: Txn, val smsId: Long?, val manualId: Long?, val rawBody: String?,
+    /** Where it came from: "sms", "notif:{package}", "archive:{name}", "stmt" (statement row) or "cash". */
+    val channel: String = CHANNEL_SMS,
+    /** Other channels that reported the same payment (collapsed by dedupe level 2). */
+    val alsoVia: List<String> = emptyList(),
+)
 
 data class UnparsedSms(val id: Long, val sender: String, val body: String, val receivedAt: LocalDateTime)
 data class NewSource(val source: Source, val example: String)
@@ -90,6 +96,8 @@ data class Snapshot(
     val sourceMeta: Map<Source, com.girish.expensetracker.core.SourceMeta> = emptyMap(),
     /** Each account or card's latest transaction day (debit cards under their own number). */
     val lastActivity: Map<Source, LocalDate> = emptyMap(),
+    /** Dedupe level 2 collapses (kept, dropped), for the audit log. */
+    val collapses: List<Pair<Row, Row>> = emptyList(),
     /** Accounts and cards the owner chose to ignore: never counted. */
     val ignored: Set<Source> = emptySet(),
 ) {
@@ -489,7 +497,7 @@ class Repo(val store: Store) {
                     splits["sms:${sms.id}"]?.let { t = t.copy(splitWith = it) }
                     // A loan settled by hand: neither spend nor still owed.
                     if (t.kind == Kind.LENT && sms.id.toString() in settledLoans) t = t.copy(kind = Kind.REPAID, category = "Lent · settled")
-                    rows += Row(t, sms.id, null, sms.body)
+                    rows += Row(t, sms.id, null, sms.body, sms.channel)
                 }
                 is ReadResult.Unparsed -> unparsed += UnparsedSms(sms.id, sms.sender, sms.body, at)
                 is ReadResult.UnknownSource -> if (key(r.parsed.source) !in ignored) newSources.putIfAbsent(r.parsed.source, sms.body)
@@ -504,7 +512,7 @@ class Repo(val store: Store) {
             val parsed = ParsedSms(Template.MANUAL, Direction.DEBIT, m.amountPaise, CASH, m.note, m.day, null, m.category)
             val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(m.createdAt), zone)
             val t = Classifier.classify(parsed, at, profile, rules)
-            rows += Row(splits["cash:${m.id}"]?.let { t.copy(splitWith = it) } ?: t, null, m.id, null)
+            rows += Row(splits["cash:${m.id}"]?.let { t.copy(splitWith = it) } ?: t, null, m.id, null, "cash")
         }
 
         // Imported statement rows fill history from before the app; a row the SMS already covers is skipped.
@@ -520,15 +528,24 @@ class Repo(val store: Store) {
             val dir = if (s.debit) Direction.DEBIT else Direction.CREDIT
             val other = com.girish.expensetracker.core.StatementCsv.payee(s.description, s.debit)
             val parsed = ParsedSms(if (s.debit) Template.STATEMENT_DEBIT else Template.STATEMENT_CREDIT, dir, s.amountPaise, source, other, s.day, null, s.description)
-            rows += Row(Classifier.classify(parsed, s.day.atTime(12, 0), profile, rules), null, null, s.description)
+            rows += Row(Classifier.classify(parsed, s.day.atTime(12, 0), profile, rules), null, null, s.description, "stmt")
         }
 
         rows.sortBy { it.txn.receivedAt }
         // Match by object identity: two real identical SIPs are equal as data but are separate payments.
         val rowByParsed = java.util.IdentityHashMap<ParsedSms, Row>().apply { rows.forEach { put(it.txn.parsed, it) } }
-        val kept = Dedupe.apply(rows.map { it.txn }).map { k -> rowByParsed.getValue(k.parsed).copy(txn = k) }
+        val l1 = Dedupe.apply(rows.map { it.txn }).map { k -> rowByParsed.getValue(k.parsed).copy(txn = k) }
+        // Level 2: the same payment reported on two channels is kept once, from the best channel.
+        val l2 = com.girish.expensetracker.core.FactDedupe.apply(l1, { it.txn }, { it.channel })
+        val kept = l2.kept.mapIndexed { i, r -> l2.alsoVia[i]?.let { r.copy(alsoVia = it) } ?: r }
+        // Money moving between the owner's own accounts and cards is a transfer, not spend or income.
+        val paired = com.girish.expensetracker.core.Transfers.pair(
+            kept.map { it.txn },
+            isOwn = profile::isKnown,
+            locked = { i -> kept[i].smsId?.let(overrides::containsKey) == true },
+        )
         // Loans and splits: paybacks from someone who owes money settle it instead of reducing spend.
-        val owe = Owe.settle(kept.map { it.txn })
+        val owe = Owe.settle(paired)
         val deduped = kept.zip(owe.txns) { r, t -> r.copy(txn = t) }
 
         return Snapshot(
@@ -546,6 +563,7 @@ class Repo(val store: Store) {
             tags = store.tags(),
             trips = store.trips(),
             sourceMeta = metas,
+            collapses = l2.collapses.map { it.kept to it.dropped },
             lastActivity = lastActivity,
             ignored = (ignored.mapNotNull(com.girish.expensetracker.core.SourceMeta::parseKey) +
                 metas.values.filter { it.status == com.girish.expensetracker.core.SourceStatus.IGNORED }.map { it.source }).toSet(),
