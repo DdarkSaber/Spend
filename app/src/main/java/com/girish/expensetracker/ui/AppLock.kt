@@ -78,13 +78,13 @@ internal class AppLock(private val activity: ComponentActivity) {
     // The prompt on screen now, if any: a second one (app start + an Unlock tap) would cancel the first silently.
     private var showing: CancellationSignal? = null
 
-    private fun show(title: String, onSuccess: () -> Unit) {
+    private fun show(title: String, onSuccess: () -> Unit, pinOnly: Boolean = false) {
         if (showing != null) return
         val signal = CancellationSignal()
         showing = signal
         BiometricPrompt.Builder(activity)
             .setTitle(title)
-            .setAllowedAuthenticators(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
+            .setAllowedAuthenticators(if (pinOnly) DEVICE_CREDENTIAL else BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
             .build()
             .authenticate(signal, activity.mainExecutor, object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
@@ -96,6 +96,11 @@ internal class AppLock(private val activity: ComponentActivity) {
                 // Unlock button never looks dead; tapping it again opens a fresh prompt.
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
                     showing = null
+                    // No fingerprint or face enrolled (some phones then refuse the combined prompt): ask for the PIN alone.
+                    if (errorCode == BiometricPrompt.BIOMETRIC_ERROR_NO_BIOMETRICS && !pinOnly) {
+                        show(title, onSuccess, pinOnly = true)
+                        return
+                    }
                     // The phone can't ask at all (screen lock removed, sensor unavailable): never strand the owner.
                     if (errorCode in cannotAsk) {
                         locked.value = false
