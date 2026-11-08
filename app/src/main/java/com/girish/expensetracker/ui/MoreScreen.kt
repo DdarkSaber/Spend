@@ -153,7 +153,7 @@ internal fun MoreScreen(snap: Snapshot, setup: Setup, isNew: (Row) -> Boolean, o
                     actions.streak,
                 )
                 Hairline()
-                Action(Icons.Outlined.EmojiEvents, "Your year", "Last 12 salary months in one page, shareable", actions.year)
+                Action(Icons.Outlined.EmojiEvents, "Your year", "Last 12 months in one page, shareable", actions.year)
             }
         }
 

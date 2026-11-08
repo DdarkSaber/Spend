@@ -79,7 +79,7 @@ fun plainCompact(paise: Long): String {
 /** "1 payment", "3 payments". */
 fun count(n: Int, word: String) = "$n $word" + if (n == 1) "" else "s"
 
-/** A salary month (28 Sep - 27 Oct) is named after the month most of its days fall in: Oct. */
+/** A month range is named after the month most of its days fall in (the 1st of Oct -> Oct). */
 fun cycleMonth(start: java.time.LocalDate): String =
     start.plusDays(15).month.getDisplayName(java.time.format.TextStyle.SHORT, java.util.Locale.ENGLISH)
 

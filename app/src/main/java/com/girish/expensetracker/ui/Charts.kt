@@ -87,7 +87,7 @@ fun pace(snap: Snapshot): Pace {
 }
 
 /**
- * Running spend this salary month (accent) against last month (quiet), with a dashed even-pace guide.
+ * Running spend this month (accent) against last month (quiet), with a dashed even-pace guide.
  * SIPs, lump sums and subscriptions are left out so the 2nd of the month does not spike it. Drag to read a day.
  */
 @Composable
@@ -257,12 +257,12 @@ fun DonutChart(slices: List<Pair<String, Long>>, total: Long, selected: String?,
 
 // ---------------------------------------------------------------- months
 
-/** One stacked bar per salary month (newest on the right), split by the biggest categories plus Other. */
+/** One stacked bar per month (newest on the right), split by the biggest categories plus Other. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun MonthsBars(snap: Snapshot, withInvestments: Boolean, isNew: (Row) -> Boolean = { false }, onRow: (Row) -> Unit = {}, onOpenMonth: (java.time.LocalDate) -> Unit = {}) {
     val t = LocalTones.current
-    // 0 = last 4 salary months, 1 = last 12, 2 = everything since the first payment.
+    // 0 = last 4 months, 1 = last 12, 2 = everything since the first payment.
     var span by remember { mutableStateOf(0) }
     val cycles = remember(snap, span) {
         when (span) {
@@ -287,8 +287,8 @@ fun MonthsBars(snap: Snapshot, withInvestments: Boolean, isNew: (Row) -> Boolean
 
     Panel {
         PanelHeader(
-            when (span) { 0 -> "Last four salary months"; 1 -> "Last ${cycles.size} salary months"; else -> "All ${cycles.size} salary months" },
-            "from the ${Ledger.salaryDay}${if (Ledger.salaryDay in 11..13) "th" else when (Ledger.salaryDay % 10) { 1 -> "st"; 2 -> "nd"; 3 -> "rd"; else -> "th" }}",
+            when (span) { 0 -> "Last four months"; 1 -> "Last ${cycles.size} months"; else -> "All ${cycles.size} months" },
+            "1st to last",
         )
         Segmented(listOf("4 months", "1 year", "All"), span, { span = it })
         Gap(12.dp)
@@ -315,7 +315,7 @@ fun MonthsBars(snap: Snapshot, withInvestments: Boolean, isNew: (Row) -> Boolean
         Gap(8.dp)
         Canvas(
             Modifier.fillMaxWidth().height(150.dp)
-                .semantics { contentDescription = "Spend per salary month: " + totals.joinToString { rupees(it) } + ". Tap a month to see its payments." }
+                .semantics { contentDescription = "Spend per month: " + totals.joinToString { rupees(it) } + ". Tap a month to see its payments." }
                 .pointerInput(stacks.size) { detectTapGestures { o -> pick((o.x / (size.width.toFloat() / stacks.size)).toInt().coerceIn(0, stacks.lastIndex)) } },
         ) {
             val slot = size.width / stacks.size
@@ -382,7 +382,7 @@ fun MonthsBars(snap: Snapshot, withInvestments: Boolean, isNew: (Row) -> Boolean
     }
 }
 
-/** One salary month opened from the bars: its total, then categories that expand into their payments. */
+/** One month opened from the bars: its total, then categories that expand into their payments. */
 @Composable
 private fun MonthDetail(snap: Snapshot, range: ClosedRange<java.time.LocalDate>, withInvestments: Boolean, isNew: (Row) -> Boolean, onRow: (Row) -> Unit) {
     val t = LocalTones.current
@@ -394,7 +394,7 @@ private fun MonthDetail(snap: Snapshot, range: ClosedRange<java.time.LocalDate>,
     val fmt = java.time.format.DateTimeFormatter.ofPattern("d MMM", java.util.Locale.ENGLISH)
     Row(Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
-            Text(cycleMonth(range.start) + " salary month", style = MaterialTheme.typography.titleSmall, color = t.ink)
+            Text(cycleMonth(range.start) + " " + range.start.year, style = MaterialTheme.typography.titleSmall, color = t.ink)
             Text("${range.start.format(fmt)} – ${range.endInclusive.format(fmt)} · ${count(rows.size, "payment")}", style = MaterialTheme.typography.bodySmall, color = t.ink2)
         }
         Text(rupees(byCat.sumOf { it.second }), style = AmountStyle, color = t.ink)
@@ -527,7 +527,7 @@ fun RangeStats(series: DailySeries, payments: Int, priorPayments: Int) {
     StatRow("Payments", "$payments", if (priorPayments == 0) null else if (pd == 0) "same as last" else "${if (pd > 0) "▲" else "▼"} ${abs(pd)} vs last", if (pd == 0 || priorPayments == 0) null else pd > 0)
 }
 
-/** Same point in the previous salary month, for fair "vs last month" deltas mid-month. */
+/** Same point in the previous month, for fair "vs last month" deltas mid-month. */
 fun lastMonthSoFar(snap: Snapshot): Map<String, Long> {
     val start = snap.cycleStart
     val prevStart = Ledger.previousCycleStart(start, snap.txns)
@@ -551,7 +551,7 @@ fun heroSeries(snap: Snapshot, range: Int): HeroSeries = when (range) {
         HeroSeries(labels, d.now, d.prior, "${d.days.first().format(shortDate)} – ${d.days.last().format(shortDate)}".uppercase())
     }
     else -> {
-        // 2 = last four salary months; 3 = every salary month since the first payment, labelled by year.
+        // 2 = last four months; 3 = every month since the first payment, labelled by year.
         val all = range >= 3
         val cycles = (if (all) Ledger.cyclesSince(snap.today, snap.txns, snap.txns.minOfOrNull { it.day }) else Ledger.cycles(snap.today, snap.txns, 4)).reversed()
         val totals = cycles.map { r -> snap.txns.filter { it.day in r }.sumOf(Ledger::monthAmount).coerceAtLeast(0) }

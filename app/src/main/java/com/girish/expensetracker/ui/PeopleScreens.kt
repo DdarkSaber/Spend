@@ -145,8 +145,8 @@ internal fun PeopleScreen(
         item {
             StatGrid(
                 listOf(
-                    Stat("You paid people", rupees(paidMonth), sub = "this salary month", highlight = true),
-                    Stat("They paid you back", rupees(gotMonth), sub = "this salary month"),
+                    Stat("You paid people", rupees(paidMonth), sub = "this month", highlight = true),
+                    Stat("They paid you back", rupees(gotMonth), sub = "this month"),
                 ),
             )
         }
@@ -204,7 +204,7 @@ private fun PeopleGroup(title: String, list: List<Person>, debts: List<com.giris
 @Composable
 internal fun PersonScreen(snap: Snapshot, person: Person, onBack: () -> Unit, onRow: (Row) -> Unit, onMarkShop: (Person) -> Unit) {
     val t = LocalTones.current
-    var range by remember { mutableStateOf(0) } // 0 this month, 1 last 3 salary months, 2 all time
+    var range by remember { mutableStateOf(0) } // 0 this month, 1 last 3 months, 2 all time
     val cycles = remember(snap) { Ledger.cycles(snap.today, snap.txns, 3) }
     val first = remember(person) { person.rows.minOf { it.txn.day } }
     val window: ClosedRange<LocalDate> = when (range) {
@@ -294,7 +294,7 @@ private fun PersonTxn(r: Row, onRow: (Row) -> Unit) {
     )
 }
 
-/** Paid vs paid back per salary month for this person (mint out, quiet grey in). */
+/** Paid vs paid back per month for this person (mint out, quiet grey in). */
 @Composable
 private fun PersonMonths(snap: Snapshot, person: Person, range: Int) {
     val t = LocalTones.current
@@ -310,7 +310,7 @@ private fun PersonMonths(snap: Snapshot, person: Person, range: Int) {
     val back = cycles.map { person.gotIn(it) }
     val max = (out + back).maxOrNull()?.coerceAtLeast(1L) ?: 1L
     Panel {
-        PanelHeader("By salary month", "${cycles.size}")
+        PanelHeader("By month", "${cycles.size}")
         Canvas(Modifier.fillMaxWidth().height(140.dp).semantics { contentDescription = "Paid and paid back per month with ${person.name}" }) {
             val slot = size.width / cycles.size
             val barW = minOf(slot * 0.28f, 18.dp.toPx())
@@ -375,10 +375,10 @@ private fun GroupsView(snap: Snapshot, all: List<Person>, onGroup: (com.girish.e
                 Gap(12.dp)
                 StatGrid(
                     listOf(
-                        Stat("You paid them", rupees(members.sumOf { it.paidIn(cycle) }), sub = "this salary month"),
+                        Stat("You paid them", rupees(members.sumOf { it.paidIn(cycle) }), sub = "this month"),
                         Stat(
                             if (owed > 0) "They owe you" else "They paid you", rupees(if (owed > 0) owed else members.sumOf { it.gotIn(cycle) }),
-                            sub = if (owed > 0) "from splits" else "this salary month", highlight = owed > 0,
+                            sub = if (owed > 0) "from splits" else "this month", highlight = owed > 0,
                         ),
                     ),
                 )

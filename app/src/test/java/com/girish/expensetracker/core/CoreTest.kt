@@ -274,19 +274,20 @@ class DedupeAndLedgerTest {
         assertEquals(20000L, bySource[SBI_CC2])
     }
 
-    @Test fun cycleFallsBackToThe28th() {
-        assertEquals(LocalDate.of(2026, 9, 28), Ledger.cycleStart(LocalDate.of(2026, 10, 26), emptyList()))
-        assertEquals(LocalDate.of(2026, 10, 28), Ledger.cycleStart(LocalDate.of(2026, 10, 30), emptyList()))
-        // February has no 28th problem but shorter months are clamped
-        assertEquals(LocalDate.of(2027, 2, 28), Ledger.cycleStart(LocalDate.of(2027, 3, 1), emptyList()))
+    @Test fun monthIsTheCalendarMonth() {
+        assertEquals(LocalDate.of(2026, 10, 1), Ledger.cycleStart(LocalDate.of(2026, 10, 26), emptyList()))
+        assertEquals(LocalDate.of(2026, 10, 1), Ledger.cycleStart(LocalDate.of(2026, 10, 31), emptyList()))
+        assertEquals(LocalDate.of(2027, 3, 1), Ledger.cycleStart(LocalDate.of(2027, 3, 1), emptyList()))
+        assertEquals(LocalDate.of(2027, 2, 1), Ledger.previousCycleStart(LocalDate.of(2027, 3, 1)))
     }
 
-    @Test fun earlySalaryStartsCycleEarly() {
+    @Test fun salaryDoesNotStartTheMonth() {
         val salary = txn("VD-HDFCBK-S", "Update! INR 1,00,000.00 deposited in HDFC Bank A/c XX1234 on 26-SEP-26 for NEFT Cr-X-SALARY PAYMENT-Y.Avl bal INR 1.00")
         val spendBefore = txn("VM-HDFCBK-T", "Sent Rs.100.00 From HDFC Bank A/C *1234 To Blinkit On 27/09/26 Ref 100000000014 Not You?")
         val day = LocalDate.of(2026, 9, 29)
-        assertEquals(LocalDate.of(2026, 9, 26), Ledger.cycleStart(day, listOf(salary)))
+        assertEquals(LocalDate.of(2026, 9, 1), Ledger.cycleStart(day, listOf(salary)))
         assertEquals(10000L, Ledger.month(listOf(salary, spendBefore), day))
+        assertEquals(0L, Ledger.month(listOf(salary, spendBefore), LocalDate.of(2026, 10, 1)))
     }
 }
 
@@ -306,9 +307,9 @@ class TrendTest {
 
     @Test fun cyclesWalkBackwardsFromToday() {
         val c = Ledger.cycles(LocalDate.of(2026, 10, 27), emptyList(), 3)
-        assertEquals(LocalDate.of(2026, 9, 28)..LocalDate.of(2026, 10, 27), c[0])
-        assertEquals(LocalDate.of(2026, 8, 28)..LocalDate.of(2026, 9, 27), c[1])
-        assertEquals(LocalDate.of(2026, 7, 28)..LocalDate.of(2026, 8, 27), c[2])
+        assertEquals(LocalDate.of(2026, 10, 1)..LocalDate.of(2026, 10, 27), c[0])
+        assertEquals(LocalDate.of(2026, 9, 1)..LocalDate.of(2026, 9, 30), c[1])
+        assertEquals(LocalDate.of(2026, 8, 1)..LocalDate.of(2026, 8, 31), c[2])
     }
 
     @Test fun paceIsCumulativeAndSkipsRecurring() {

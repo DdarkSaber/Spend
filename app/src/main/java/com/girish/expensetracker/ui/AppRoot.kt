@@ -174,6 +174,7 @@ fun AppRoot(
                                 if (yes) "Payments to ${c.name} of about ${rupees(c.typicalPaise)} are now Rent" else "OK, not rent"
                             }
                         },
+                        onSalary = { ctl.page = Page.SalaryPeriod(it) },
                         onRow = openRow,
                     )
                     Tab.CARDS -> CardsScreen(s, isNew, onCardSettings = { ctl.sheet = Sheet.CardSettings(it) },
@@ -254,6 +255,7 @@ private fun PageHost(ctl: AppController, s: Snapshot, isNew: (Row) -> Boolean, o
             s, isNew, onBack = { ctl.page = null }, onNew = { ctl.sheet = Sheet.NewTrip },
             onDelete = { trip -> ctl.act { store.deleteTrip(trip.id); "Deleted ${trip.name}" } }, onRow = openRow,
         )
+        is Page.SalaryPeriod -> SalaryPeriodScreen(s, p.start, isNew, onBack = { ctl.page = null }, onRow = openRow)
         is Page.Person -> {
             val person = people(s).firstOrNull { it.key == p.key }
             if (person == null) ctl.page = null

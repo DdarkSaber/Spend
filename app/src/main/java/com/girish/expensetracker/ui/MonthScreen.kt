@@ -51,12 +51,15 @@ import java.util.Locale
 
 // ---------------------------------------------------------------- month
 
+private val monthYearLong: DateTimeFormatter = DateTimeFormatter.ofPattern("MMMM yyyy", Locale.ENGLISH)
+
 @Composable
 internal fun MonthScreen(
     snap: Snapshot,
     isNew: (Row) -> Boolean,
     onBudgets: () -> Unit = {},
     onRent: (com.girish.expensetracker.core.RentCandidate, Boolean) -> Unit = { _, _ -> },
+    onSalary: (java.time.LocalDate) -> Unit = {},
     onRow: (Row) -> Unit,
 ) {
     val t = LocalTones.current
@@ -65,7 +68,7 @@ internal fun MonthScreen(
     var selected by remember { mutableStateOf<String?>(null) }
     var openCat by remember { mutableStateOf<String?>(null) }
 
-    // Salary months, newest first, back to the first one with any payment. 0 is the running month.
+    // Calendar months, newest first, back to the first one with any payment. 0 is the running month.
     val months = remember(snap) {
         val first = snap.txns.minOfOrNull { it.day }
         Ledger.cyclesSince(snap.today, snap.txns, first).ifEmpty { listOf(snap.cycleStart..snap.today) }
@@ -89,12 +92,13 @@ internal fun MonthScreen(
     androidx.compose.runtime.LaunchedEffect(view) { list.scrollToItem(0) }
 
     LazyColumn(Modifier.fillMaxSize(), state = list, contentPadding = screenPadding, verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { ScreenTitle("Month", "Salary month since ${snap.cycleStart.format(dayMonth)}") }
+        item { ScreenTitle("Month", range.start.format(monthYearLong)) }
         item { Segmented(listOf("Overview", "Trends", "Recurring"), view, { view = it }) }
         if (view == 0) {
             item { MonthSwitcher(range, running, canBack = monthIndex < months.lastIndex, onBack = { showMonth(monthIndex + 1) }, onNext = { showMonth(monthIndex - 1) }) }
             // The same summary for every month, salary included; the running month adds its budget and pace.
             item { MonthSummary(report, running) }
+            item { MonthSalaries(snap, range, onSalary) }
             if (running) {
                 item { ForecastPanel(snap.forecast) }
                 item { BudgetPanel(snap.budgets, onBudgets) }
@@ -112,7 +116,7 @@ internal fun MonthScreen(
                     RollingAmount(total, MaterialTheme.typography.displaySmall.copy(fontWeight = androidx.compose.ui.text.font.FontWeight(700), fontFeatureSettings = "tnum"), t.ink)
                     Text(if (withInvestments) "including investments" else "excluding investments", style = MaterialTheme.typography.bodySmall, color = t.ink2)
                     DonutChart(ring, total, selected) { selected = it }
-                    if (slices.isEmpty()) Text(if (running) "Nothing spent yet this salary month." else "Nothing spent in this month.", style = MaterialTheme.typography.bodyMedium, color = t.ink2)
+                    if (slices.isEmpty()) Text(if (running) "Nothing spent yet this month." else "Nothing spent in this month.", style = MaterialTheme.typography.bodyMedium, color = t.ink2)
                     slices.forEachIndexed { k, (cat, amt) ->
                         if (k > 0) Hairline()
                         val ringKey = if (cat in inOther) "Other" else cat
@@ -175,7 +179,7 @@ internal fun MonthScreen(
         if (view == 1) {
             // Trends bars are oldest-left; "open" jumps Overview to that month.
             item { MonthsBars(snap, withInvestments, isNew, onRow, onOpenMonth = { start -> months.indexOfFirst { it.start == start }.takeIf { it >= 0 }?.let { showMonth(it); view = 0 } }) }
-            item { SalaryHistory(snap) }
+            item { SalaryHistory(snap, onSalary) }
             item { SavingsPanel(snap.savings) }
             item { YearPanel(snap) }
         }
@@ -196,9 +200,10 @@ internal fun lastSalary(snap: Snapshot): Row? = snap.rows.filter { it.txn.isSala
 
 /** Every salary credit, newest first, with the change from the one before (a raise shows up here). */
 @Composable
-private fun SalaryHistory(snap: Snapshot) {
+private fun SalaryHistory(snap: Snapshot, onOpen: (java.time.LocalDate) -> Unit) {
     val t = LocalTones.current
     val salaries = remember(snap) { snap.rows.filter { it.txn.isSalary }.sortedByDescending { it.txn.day } }
+    val periods = remember(snap) { Ledger.salaryPeriods(snap.txns, snap.today) }
     Panel(padding = PaddingValues(start = 18.dp, end = 18.dp, top = 18.dp, bottom = 8.dp)) {
         PanelHeader("Salary history", salaries.firstOrNull()?.let { sourceLabel(it.txn.parsed.source) })
         if (salaries.isEmpty()) {
@@ -210,9 +215,10 @@ private fun SalaryHistory(snap: Snapshot) {
             if (k > 0) Hairline()
             val before = salaries.getOrNull(k + 1)?.txn?.amountPaise
             val change = before?.let { r.txn.amountPaise - it }
-            Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+            val period = periods.firstOrNull { it.contains(r.txn) }
+            Row(Modifier.fillMaxWidth().clickable(enabled = period != null) { period?.let { onOpen(it.start) } }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(cycleMonth(r.txn.day.plusDays(1)) + " " + r.txn.day.year, style = MaterialTheme.typography.titleSmall, color = t.ink)
+                    Text(cycleMonth(r.txn.day) + " " + r.txn.day.year + if (period != null && period.salary !== r.txn) " · extra payout" else "", style = MaterialTheme.typography.titleSmall, color = t.ink)
                     Text("credited ${r.txn.day.format(dayMonth)}", style = MaterialTheme.typography.bodySmall, color = t.ink2)
                 }
                 Column(horizontalAlignment = Alignment.End) {
@@ -249,7 +255,7 @@ private fun RentCard(c: com.girish.expensetracker.core.RentCandidate, onMark: ()
     }
 }
 
-/** ‹ Sep 2026 · 28 Aug – 27 Sep ›: steps through salary months; the running month is the default. */
+/** ‹ Sep 2026 · 1 Sep – 30 Sep ›: steps through calendar months; the running month is the default. */
 @Composable
 private fun MonthSwitcher(range: ClosedRange<java.time.LocalDate>, running: Boolean, canBack: Boolean, onBack: () -> Unit, onNext: () -> Unit) {
     val t = LocalTones.current
@@ -282,7 +288,7 @@ private fun MonthSummary(r: com.girish.expensetracker.core.MonthReport, running:
         listOf(
             Stat("Spent", rupees(r.total), sub = if (r.totalBefore > 0) "vs ${rupees(r.totalBefore)} before" else null,
                 up = if (r.totalBefore > 0) diff > 0 else null, highlight = true),
-            Stat("Salary", if (hasSalary) rupees(r.salaryPaise) else "–", sub = r.salaryDay?.let { "credited ${it.format(dayMonth)}" } ?: "no salary SMS"),
+            Stat("Salary", if (hasSalary) rupees(r.salaryPaise) else "–", sub = r.salaryDay?.let { "credited ${it.format(dayMonth)}" } ?: "none this month"),
             if (hasSalary) Stat(if (running) "Left" else "Saved", rupees(r.salaryPaise - r.total), sub = "${((r.savingsRate ?: 0.0) * 100).toInt()}% of salary")
             else Stat(if (running) "Left" else "Saved", "–", sub = "needs a salary"),
             Stat("Per day", rupees(r.perDay), sub = "over ${count(r.days, "day")}"),

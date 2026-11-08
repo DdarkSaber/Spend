@@ -73,7 +73,7 @@ internal fun CardsScreen(
             Panel(padding = PaddingValues(start = 18.dp, end = 18.dp, top = 8.dp, bottom = 8.dp)) {
                 if (bySource.isEmpty()) {
                     Text(
-                        if (view == 0) "No card spends this salary month." else "No UPI or debit spends this salary month.",
+                        if (view == 0) "No card spends this month." else "No UPI or debit spends this month.",
                         style = MaterialTheme.typography.bodyMedium, color = t.ink2, modifier = Modifier.padding(vertical = 14.dp),
                     )
                 }

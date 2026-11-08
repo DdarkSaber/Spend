@@ -517,7 +517,7 @@ internal fun BudgetSheet(plan: Plan, used: List<String>, onDismiss: () -> Unit, 
             item { Text("Monthly budgets", style = MaterialTheme.typography.headlineSmall, color = t.ink) }
             item {
                 OutlinedTextField(
-                    total, { total = it.filter(Char::isDigit) }, label = { Text("Whole salary month, ₹") }, singleLine = true,
+                    total, { total = it.filter(Char::isDigit) }, label = { Text("Whole month, ₹") }, singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), colors = fieldColors(), shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -562,7 +562,7 @@ internal fun SubscriptionsPanel(subs: List<Subscription>) {
 
 // ---------------------------------------------------------------- year
 
-/** Twelve salary months side by side, with the year's total and monthly average. */
+/** Twelve months side by side, with the year's total and monthly average. */
 @Composable
 internal fun YearPanel(snap: Snapshot) {
     val t = LocalTones.current
@@ -574,7 +574,7 @@ internal fun YearPanel(snap: Snapshot) {
         if (shown.isEmpty()) emptyList() else Ledger.byCategoryIn(snap.txns, shown.first().start..snap.today).filterValues { it > 0 }.toList().sortedByDescending { it.second }.take(6)
     }
     Panel {
-        PanelHeader("Last 12 salary months", if (shown.isEmpty()) null else "${shown.size} with data")
+        PanelHeader("Last 12 months", if (shown.isEmpty()) null else "${shown.size} with data")
         if (shown.size < 2) {
             Text("Year view fills in as months pass. Importing a bank statement adds older months.", style = MaterialTheme.typography.bodySmall, color = t.ink2)
             return@Panel
@@ -587,7 +587,7 @@ internal fun YearPanel(snap: Snapshot) {
         Gap(14.dp)
         val max = (totals.maxOrNull() ?: 1L).coerceAtLeast(1L)
         val avg = total / shown.size
-        Canvas(Modifier.fillMaxWidth().height(120.dp).semantics { contentDescription = "Spend per salary month: " + totals.joinToString { rupees(it) } }) {
+        Canvas(Modifier.fillMaxWidth().height(120.dp).semantics { contentDescription = "Spend per month: " + totals.joinToString { rupees(it) } }) {
             val slot = size.width / totals.size
             val barW = minOf(slot * 0.55f, 22.dp.toPx())
             val ya = size.height - size.height * avg / max

@@ -130,7 +130,7 @@ internal fun SavingsPanel(months: List<SavingsMonth>) {
         Row(verticalAlignment = Alignment.Bottom) {
             Text("${(now.rate * 100).toInt()}%", style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight(700)), color = if (now.rate < 0) t.warn else t.ink)
             Spacer(Modifier.width(8.dp))
-            Text("saved so far this salary month · ${rupees(now.savedPaise)}", style = MaterialTheme.typography.bodySmall, color = t.ink2, modifier = Modifier.padding(bottom = 6.dp))
+            Text("saved so far this month · ${rupees(now.savedPaise)}", style = MaterialTheme.typography.bodySmall, color = t.ink2, modifier = Modifier.padding(bottom = 6.dp))
         }
         if (months.size > 1) {
             Gap(14.dp)

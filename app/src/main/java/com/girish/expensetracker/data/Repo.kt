@@ -197,7 +197,7 @@ data class Snapshot(
     val budgets: List<BudgetLine> by lazy { Budgets.lines(txns, cycleStart, today, plan.budgetTotal, plan.budgetByCategory) }
 
     /** Recurring charges, without loan instalments (those are listed as EMIs). */
-    /** Rent, maid, bills, SIPs: learned from the last three finished salary months. */
+    /** Rent, maid, bills, SIPs: learned from the last three finished months. */
     val fixedCosts: List<FixedCost> by lazy { FixedCosts.find(txns, Ledger.cycles(today, txns, 4).drop(1)) }
 
     val forecast: Forecast by lazy { Forecasts.of(txns, cycleStart, today, fixedCosts) }
@@ -790,7 +790,7 @@ class Repo(val store: Store) {
     fun setStatementDay(card: Source, day: Int?) =
         saveKeyed(KEY_STATEMENT_DAYS, keyed(KEY_STATEMENT_DAYS).let { if (day == null) it - key(card) else it + (key(card) to day.toLong()) })
 
-    /** [category] null is the whole salary month; [paise] null or 0 removes the budget. */
+    /** [category] null is the whole month; [paise] null or 0 removes the budget. */
     fun setBudget(category: String?, paise: Long?) {
         if (category == null) store.setSetting(KEY_BUDGET_TOTAL, (paise ?: 0L).toString())
         else saveKeyed(KEY_BUDGETS, keyed(KEY_BUDGETS).let { if (paise == null || paise <= 0) it - category else it + (category to paise) })

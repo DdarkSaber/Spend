@@ -21,7 +21,8 @@ class HistoryFixesTest {
         val first = LocalDate.of(2022, 4, 18)
         val all = Ledger.cyclesSince(today, emptyList(), first)
         assertTrue("covers the first payment", all.last().start <= first)
-        assertTrue("about 55 salary months", all.size in 54..56)
+        assertEquals("Apr 2022 .. Nov 2026", 56, all.size)
+        assertEquals(LocalDate.of(2022, 4, 1), all.last().start)
         assertEquals(Ledger.cycles(today, emptyList(), 12), all.take(12))
         assertEquals(12, Ledger.cyclesSince(today, emptyList(), first, max = 12).size)
     }

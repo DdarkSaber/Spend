@@ -52,14 +52,14 @@ object UnusualSpend {
     }
 }
 
-/** Salary in, spend out, and the share saved, for one salary month. */
+/** Salary in, spend out, and the share saved, for one month. */
 data class SavingsMonth(val start: LocalDate, val salaryPaise: Long, val spentPaise: Long) {
     val savedPaise: Long get() = salaryPaise - spentPaise
     val rate: Double get() = if (salaryPaise <= 0) 0.0 else savedPaise.toDouble() / salaryPaise
 }
 
 object Savings {
-    /** Salary months (newest last) that had a salary credit; months with no salary are left out rather than shown as -100%. */
+    /** Months (newest last) that had a salary credit; months with no salary are left out rather than shown as -100%. */
     fun months(txns: List<Txn>, cycles: List<ClosedRange<LocalDate>>): List<SavingsMonth> = cycles.sortedBy { it.start }.mapNotNull { r ->
         val salary = txns.filter { it.isSalary && it.day in r }.sumOf { it.amountPaise }
         if (salary <= 0) null else SavingsMonth(r.start, salary, txns.filter { it.day in r }.sumOf(Ledger::monthAmount))

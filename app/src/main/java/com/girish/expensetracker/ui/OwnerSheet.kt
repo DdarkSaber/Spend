@@ -111,7 +111,7 @@ internal fun OwnerSheet(
                 )
             }
             item {
-                Text("Salary month starts on", style = MaterialTheme.typography.titleSmall, color = t.ink)
+                Text("Salary usually comes on", style = MaterialTheme.typography.titleSmall, color = t.ink)
                 var picking by remember { mutableStateOf(false) }
                 if (picking) DayGridDialog(day, onDismiss = { picking = false }) { day = it; picking = false }
                 Row(Modifier.padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -151,7 +151,7 @@ internal fun ReviewSetupCard(owner: Owner, onReview: () -> Unit) {
         Text("Set up from your SMS", style = MaterialTheme.typography.titleMedium, color = t.ink)
         Text(
             "Found ${owner.tracked.size} accounts and cards" + (if (owner.displayName.isNotBlank()) " for ${owner.displayName}" else "") +
-                ", salary month from the ${owner.salaryDay}${ordinal(owner.salaryDay)}. Check that's right.",
+                ", salary usually on the ${owner.salaryDay}${ordinal(owner.salaryDay)}. Check that's right.",
             style = MaterialTheme.typography.bodyMedium, color = t.ink2, modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
         )
         Button(

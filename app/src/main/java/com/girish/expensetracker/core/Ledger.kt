@@ -92,7 +92,7 @@ object Dedupe {
 /** The two notification numbers and the in-app breakdowns. Amounts are in paise; positive = money spent. */
 object Ledger {
 
-    /** Fallback start of the salary month when no salary SMS is found; set from the owner's settings at startup. */
+    /** The owner's usual salary day (from settings); only a hint now that months are calendar months. */
     @Volatile var salaryDay = 28
 
     /** Today X: spends, subscriptions and SIPs count; reimbursements and refunds reduce it; lump-sum investments do not count. */
@@ -117,54 +117,62 @@ object Ledger {
     }
 
     /**
-     * Month runs salary to salary. Normally from the 28th; if the salary SMS arrived up to 5 days early
-     * (weekend/holiday) or later than the 28th, the cycle starts on the actual salary date.
+     * A month is the calendar month, 1st to last, everywhere (budgets, pace, forecast, charts). Salary-to-salary
+     * spending lives only in [salaryPeriods]. [txns] is kept so callers need not change.
      */
-    fun cycleStart(day: LocalDate, txns: List<Txn>): LocalDate {
-        val fallback = lastSalaryDayOnOrBefore(day)
-        val salary = txns.filter { it.isSalary && !it.day.isAfter(day) }.maxOfOrNull { it.day }
-        return if (salary != null && !salary.isBefore(fallback.minusDays(5))) salary else fallback
-    }
+    @Suppress("UNUSED_PARAMETER")
+    fun cycleStart(day: LocalDate, txns: List<Txn> = emptyList()): LocalDate = day.withDayOfMonth(1)
 
-    private fun lastSalaryDayOnOrBefore(day: LocalDate): LocalDate {
-        val thisMonth = clampedSalaryDay(YearMonth.from(day))
-        return if (!thisMonth.isAfter(day)) thisMonth else clampedSalaryDay(YearMonth.from(day).minusMonths(1))
-    }
+    /** The month before the one starting on [start]. */
+    @Suppress("UNUSED_PARAMETER")
+    fun previousCycleStart(start: LocalDate, txns: List<Txn> = emptyList()): LocalDate = start.withDayOfMonth(1).minusMonths(1)
 
-    private fun clampedSalaryDay(ym: YearMonth): LocalDate = ym.atDay(minOf(salaryDay, ym.lengthOfMonth()))
+    /** Up to [n] calendar months, newest first, each as 1st..last (the newest ends on [day]). */
+    @Suppress("UNUSED_PARAMETER")
+    fun cycles(day: LocalDate, txns: List<Txn>, n: Int): List<ClosedRange<LocalDate>> =
+        (0 until n).map { k -> monthRange(day, k) }
 
-    /** The salary month that ends where [start] begins. */
-    fun previousCycleStart(start: LocalDate, txns: List<Txn>): LocalDate = cycleStart(start.minusDays(1), txns)
-
-    /** Up to [n] salary months, newest first, each as start..end (the newest ends on [day]). */
-    fun cycles(day: LocalDate, txns: List<Txn>, n: Int): List<ClosedRange<LocalDate>> {
+    /** Every calendar month from the one holding [day] back to the one holding [first], newest first. */
+    @Suppress("UNUSED_PARAMETER")
+    fun cyclesSince(day: LocalDate, txns: List<Txn>, first: LocalDate?, max: Int = 600): List<ClosedRange<LocalDate>> {
+        val firstMonth = first?.let { YearMonth.from(it) }
         val out = mutableListOf<ClosedRange<LocalDate>>()
-        var end = day
-        repeat(n) {
-            val start = cycleStart(end, txns)
-            out += start..end
-            end = start.minusDays(1)
+        var k = 0
+        while (out.size < max) {
+            val r = monthRange(day, k++)
+            out += r
+            if (firstMonth == null || YearMonth.from(r.start) <= firstMonth) break
         }
         return out
     }
+
+    /** The calendar month [back] months before the one holding [day]; the running month ends on [day]. */
+    private fun monthRange(day: LocalDate, back: Int): ClosedRange<LocalDate> {
+        val ym = YearMonth.from(day).minusMonths(back.toLong())
+        return ym.atDay(1)..(if (back == 0) day else ym.atEndOfMonth())
+    }
+
+    /** A salary credit this soon after the previous one is an extra payout (joining pay, bonus), not a new period. */
+    const val EXTRA_PAYOUT_DAYS = 25
 
     /**
-     * Every salary month from the one holding [day] back to the one holding [first], newest first. Salary days are
-     * looked up in a sorted set, so years of history cost the same as a few months.
+     * Salary to salary, oldest first: each salary credit until the day before the next (the last until [today]).
+     * A credit less than [EXTRA_PAYOUT_DAYS] after the previous one joins the period as an extra payout.
      */
-    fun cyclesSince(day: LocalDate, txns: List<Txn>, first: LocalDate?, max: Int = 600): List<ClosedRange<LocalDate>> {
-        val salaries = java.util.TreeSet<LocalDate>().apply { txns.forEach { if (it.isSalary) add(it.day) } }
-        val out = mutableListOf<ClosedRange<LocalDate>>()
-        var end = day
-        while (out.size < max) {
-            val fallback = lastSalaryDayOnOrBefore(end)
-            val salary = salaries.floor(end)
-            val start = if (salary != null && !salary.isBefore(fallback.minusDays(5))) salary else fallback
-            out += start..end
-            if (first == null || !start.isAfter(first)) break
-            end = start.minusDays(1)
+    fun salaryPeriods(txns: List<Txn>, today: LocalDate): List<SalaryPeriod> {
+        val salaries = txns.filter { it.isSalary }.sortedWith(compareBy({ it.day }, { it.receivedAt }))
+        val groups = mutableListOf<MutableList<Txn>>()
+        var prev: LocalDate? = null
+        for (s in salaries) {
+            val p = prev
+            if (p == null || groups.isEmpty() || java.time.temporal.ChronoUnit.DAYS.between(p, s.day) >= EXTRA_PAYOUT_DAYS) groups += mutableListOf(s)
+            else groups.last() += s
+            prev = s.day
         }
-        return out
+        return groups.mapIndexed { i, g ->
+            val end = groups.getOrNull(i + 1)?.first()?.day?.minusDays(1) ?: maxOf(today, g.first().day)
+            SalaryPeriod(g.first(), g.drop(1), g.first().day..end)
+        }
     }
 
     /** Month amount per category inside [range]. */
@@ -205,4 +213,11 @@ object Ledger {
             .groupBy { it.parsed.source }
             .mapValues { (_, list) -> list.sumOf { it.amountPaise } }
     }
+}
+
+/** One salary and what it paid for, until the next salary. [extras] are payouts credited inside it (bonus, joining pay). */
+data class SalaryPeriod(val salary: Txn, val extras: List<Txn>, val range: ClosedRange<LocalDate>) {
+    val start: LocalDate get() = range.start
+    val salaryPaise: Long get() = salary.amountPaise + extras.sumOf { it.amountPaise }
+    fun contains(t: Txn): Boolean = t === salary || extras.any { it === t }
 }
