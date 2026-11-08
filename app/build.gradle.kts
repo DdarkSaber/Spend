@@ -1,3 +1,5 @@
+import java.io.File
+import java.util.Base64
 import java.util.Properties
 
 plugins {
@@ -5,10 +7,23 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-// Release signing comes from a local, untracked keystore.properties (storeFile, storePassword, keyAlias, keyPassword).
-// Without it, release builds are simply unsigned, so the project still builds for anyone who clones it.
+// Release signing comes from either a local untracked keystore.properties (storeFile, storePassword,
+// keyAlias, keyPassword) or, in CI, the env vars KEYSTORE_B64 / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD.
+// With neither, release builds are simply unsigned, so the project still builds for anyone who clones it.
 val keystoreProps = Properties().apply {
     rootProject.file("keystore.properties").takeIf { it.exists() }?.inputStream()?.use { load(it) }
+}
+
+// CI decodes KEYSTORE_B64 into this file and fills the passwords from env; returns null when unset.
+val ciKeystore: File? = System.getenv("KEYSTORE_B64")?.takeIf { it.isNotBlank() }?.let { b64 ->
+    val f = File(rootProject.layout.buildDirectory.get().asFile, "ci-release.jks")
+    f.parentFile.mkdirs()
+    f.writeBytes(Base64.getDecoder().decode(b64.trim()))
+    keystoreProps.setProperty("storeFile", f.absolutePath)
+    keystoreProps.setProperty("storePassword", System.getenv("KEYSTORE_PASSWORD").orEmpty())
+    keystoreProps.setProperty("keyAlias", System.getenv("KEY_ALIAS").orEmpty())
+    keystoreProps.setProperty("keyPassword", System.getenv("KEY_PASSWORD").orEmpty())
+    f
 }
 
 android {
@@ -19,8 +34,8 @@ android {
         applicationId = "com.girish.expensetracker"
         minSdk = 31
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.0.0"
+        versionCode = 8
+        versionName = "1.2.0"
     }
 
     signingConfigs {

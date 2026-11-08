@@ -3,11 +3,17 @@ name: Build
 on:
   push:
     branches: [main, "v1.*"]
+    tags: ["v*"]
   pull_request:
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
@@ -29,3 +35,23 @@ jobs:
           name: spend-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
+
+      # Release APK: built and signed only when the signing secrets are present (they are not on forks or PRs).
+      - name: Release APK
+        id: release
+        if: ${{ env.KEYSTORE_B64 != '' }}
+        run: ./gradlew assembleRelease
+
+      - uses: actions/upload-artifact@v4
+        if: ${{ steps.release.outcome == 'success' }}
+        with:
+          name: spend-release-apk
+          path: app/build/outputs/apk/release/app-release.apk
+          retention-days: 90
+
+      # A pushed tag (v1.2.0) also publishes a GitHub Release with the signed APK attached.
+      - name: Publish release on tag
+        if: ${{ startsWith(github.ref, 'refs/tags/v') && steps.release.outcome == 'success' }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/outputs/apk/release/app-release.apk
