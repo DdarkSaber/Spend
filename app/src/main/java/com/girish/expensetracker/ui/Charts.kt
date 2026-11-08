@@ -262,8 +262,17 @@ fun DonutChart(slices: List<Pair<String, Long>>, total: Long, selected: String?,
 @Composable
 fun MonthsBars(snap: Snapshot, withInvestments: Boolean, isNew: (Row) -> Boolean = { false }, onRow: (Row) -> Unit = {}, onOpenMonth: (java.time.LocalDate) -> Unit = {}) {
     val t = LocalTones.current
-    val cycles = remember(snap) { Ledger.cycles(snap.today, snap.txns, 4).reversed() }
-    val perCycle = remember(snap, withInvestments) {
+    // 0 = last 4 salary months, 1 = last 12, 2 = everything since the first payment.
+    var span by remember { mutableStateOf(0) }
+    val cycles = remember(snap, span) {
+        when (span) {
+            0 -> Ledger.cycles(snap.today, snap.txns, 4)
+            1 -> Ledger.cyclesSince(snap.today, snap.txns, snap.txns.minOfOrNull { it.day }, max = 12)
+            else -> Ledger.cyclesSince(snap.today, snap.txns, snap.txns.minOfOrNull { it.day })
+        }.reversed()
+    }
+    val many = cycles.size > 6
+    val perCycle = remember(snap, withInvestments, cycles) {
         cycles.map { r -> Ledger.byCategoryIn(snap.txns, r).filter { (k, v) -> v > 0 && (withInvestments || k != "Investment") } }
     }
     val top = perCycle.flatMap { it.entries }.groupBy({ it.key }, { it.value }).mapValues { it.value.sum() }
@@ -273,19 +282,35 @@ fun MonthsBars(snap: Snapshot, withInvestments: Boolean, isNew: (Row) -> Boolean
     val maxTotal = (totals.maxOrNull() ?: 0L).coerceAtLeast(1L)
     val progress = drawIn(withInvestments)
     // Tap a month (bar or label) to open it below; tap it again to close.
-    var picked by remember(snap) { mutableStateOf<Int?>(null) }
+    var picked by remember(snap, span) { mutableStateOf<Int?>(null) }
     fun pick(i: Int) { picked = if (picked == i) null else i }
 
     Panel {
-        PanelHeader("Last four salary months", "from the ${Ledger.salaryDay}${if (Ledger.salaryDay in 11..13) "th" else when (Ledger.salaryDay % 10) { 1 -> "st"; 2 -> "nd"; 3 -> "rd"; else -> "th" }}")
+        PanelHeader(
+            when (span) { 0 -> "Last four salary months"; 1 -> "Last ${cycles.size} salary months"; else -> "All ${cycles.size} salary months" },
+            "from the ${Ledger.salaryDay}${if (Ledger.salaryDay in 11..13) "th" else when (Ledger.salaryDay % 10) { 1 -> "st"; 2 -> "nd"; 3 -> "rd"; else -> "th" }}",
+        )
+        Segmented(listOf("4 months", "1 year", "All"), span, { span = it })
+        Gap(12.dp)
         if (totals.none { it > 0 }) {
             Text("Not enough history yet.", style = MaterialTheme.typography.bodyMedium, color = t.ink2)
             return@Panel
         }
-        Row(Modifier.fillMaxWidth()) {
-            totals.forEach { v ->
-                Text(compact(v), style = AmountStyle, color = t.ink, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
+        if (!many) {
+            Row(Modifier.fillMaxWidth()) {
+                totals.forEach { v ->
+                    Text(compact(v), style = AmountStyle, color = t.ink, modifier = Modifier.weight(1f), textAlign = TextAlign.Center)
+                }
             }
+        } else {
+            // Too many bars for a number on each: the average, the busiest month, and the picked one.
+            val withSpend = totals.filter { it > 0 }
+            val peak = totals.indices.maxByOrNull { totals[it] } ?: 0
+            Text(
+                "Avg ${compact(withSpend.sum() / withSpend.size.coerceAtLeast(1))} a month · peak ${compact(totals[peak])} in ${cycleMonth(cycles[peak].start)} ${cycles[peak].start.year}" +
+                    (picked?.let { " · ${cycleMonth(cycles[it].start)} ${cycles[it].start.year}: ${compact(totals[it])}" } ?: ""),
+                style = MaterialTheme.typography.bodySmall, color = t.ink2,
+            )
         }
         Gap(8.dp)
         Canvas(
@@ -294,7 +319,7 @@ fun MonthsBars(snap: Snapshot, withInvestments: Boolean, isNew: (Row) -> Boolean
                 .pointerInput(stacks.size) { detectTapGestures { o -> pick((o.x / (size.width.toFloat() / stacks.size)).toInt().coerceIn(0, stacks.lastIndex)) } },
         ) {
             val slot = size.width / stacks.size
-            val barW = minOf(slot * 0.42f, 44.dp.toPx())
+            val barW = if (many) slot * 0.7f else minOf(slot * 0.42f, 44.dp.toPx())
             drawLine(t.hairline, Offset(0f, size.height), Offset(size.width, size.height), strokeWidth = 1f)
             stacks.forEachIndexed { b, stack ->
                 val left = slot * b + (slot - barW) / 2
@@ -313,13 +338,26 @@ fun MonthsBars(snap: Snapshot, withInvestments: Boolean, isNew: (Row) -> Boolean
             }
         }
         Gap(8.dp)
-        Row(Modifier.fillMaxWidth()) {
-            cycles.forEachIndexed { k, r ->
-                Text(
-                    if (k == cycles.lastIndex) "NOW" else cycleMonth(r.start).uppercase(),
-                    style = DataLabel, color = if (picked == k) t.accent else t.ink3, textAlign = TextAlign.Center,
-                    modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).clickable { pick(k) }.padding(vertical = 6.dp),
-                )
+        if (!many) {
+            Row(Modifier.fillMaxWidth()) {
+                cycles.forEachIndexed { k, r ->
+                    Text(
+                        if (k == cycles.lastIndex) "NOW" else cycleMonth(r.start).uppercase(),
+                        style = DataLabel, color = if (picked == k) t.accent else t.ink3, textAlign = TextAlign.Center,
+                        modifier = Modifier.weight(1f).clip(RoundedCornerShape(6.dp)).clickable { pick(k) }.padding(vertical = 6.dp),
+                    )
+                }
+            }
+        } else {
+            // One label per year, as wide as that year's bars; tap a bar to pick a month.
+            Row(Modifier.fillMaxWidth()) {
+                cycles.groupBy { it.start.year }.forEach { (year, list) ->
+                    Text(
+                        if (list.size >= 3) year.toString() else "'" + (year % 100).toString().padStart(2, '0'),
+                        style = DataLabel, color = t.ink3, textAlign = TextAlign.Center, maxLines = 1,
+                        modifier = Modifier.weight(list.size.toFloat()).padding(vertical = 6.dp),
+                    )
+                }
             }
         }
         Gap(14.dp)
@@ -513,10 +551,13 @@ fun heroSeries(snap: Snapshot, range: Int): HeroSeries = when (range) {
         HeroSeries(labels, d.now, d.prior, "${d.days.first().format(shortDate)} – ${d.days.last().format(shortDate)}".uppercase())
     }
     else -> {
-        val cycles = Ledger.cycles(snap.today, snap.txns, 4).reversed()
+        // 2 = last four salary months; 3 = every salary month since the first payment, labelled by year.
+        val all = range >= 3
+        val cycles = (if (all) Ledger.cyclesSince(snap.today, snap.txns, snap.txns.minOfOrNull { it.day }) else Ledger.cycles(snap.today, snap.txns, 4)).reversed()
         val totals = cycles.map { r -> snap.txns.filter { it.day in r }.sumOf(Ledger::monthAmount).coerceAtLeast(0) }
         HeroSeries(
-            cycles.mapIndexed { k, r -> if (k == cycles.lastIndex) "Now" else cycleMonth(r.start) },
+            if (all) cycles.mapIndexed { k, r -> if (k == 0 || r.start.year != cycles[k - 1].start.year) r.start.year.toString() else "" }
+            else cycles.mapIndexed { k, r -> if (k == cycles.lastIndex) "Now" else cycleMonth(r.start) },
             totals.toLongArray(), null,
             "${cycles.first().start.format(shortDate)} – ${snap.today.format(shortDate)}".uppercase(),
         )
@@ -602,8 +643,17 @@ fun HeroChart(series: HeroSeries, modifier: Modifier = Modifier) {
         }
         Gap(8.dp)
         Row(Modifier.fillMaxWidth().padding(end = 44.dp)) {
-            series.labels.forEach { l ->
-                Text(l, style = DataLabel, color = t.ink3, textAlign = TextAlign.Center, modifier = Modifier.weight(1f), maxLines = 1)
+            if (series.labels.size <= 12) {
+                series.labels.forEach { l ->
+                    Text(l, style = DataLabel, color = t.ink3, textAlign = TextAlign.Center, modifier = Modifier.weight(1f), maxLines = 1)
+                }
+            } else {
+                // Many buckets: each label spans its own bucket and the blank ones after it (one year label per year).
+                val runs = mutableListOf<Pair<String, Int>>()
+                series.labels.forEach { l -> if (l.isNotEmpty() || runs.isEmpty()) runs += l to 1 else runs[runs.lastIndex] = runs.last().first to runs.last().second + 1 }
+                runs.forEach { (l, n) ->
+                    Text(l, style = DataLabel, color = t.ink3, textAlign = TextAlign.Start, modifier = Modifier.weight(n.toFloat()), maxLines = 1)
+                }
             }
         }
     }

@@ -299,7 +299,7 @@ private fun PersonTxn(r: Row, onRow: (Row) -> Unit) {
 private fun PersonMonths(snap: Snapshot, person: Person, range: Int) {
     val t = LocalTones.current
     val first = person.rows.minOf { it.txn.day }
-    val all = Ledger.cycles(snap.today, snap.txns, 24).filter { it.endInclusive >= first }.reversed()
+    val all = Ledger.cyclesSince(snap.today, snap.txns, first).reversed()
     val cycles = when (range) {
         0 -> all.takeLast(1)
         1 -> all.takeLast(3)

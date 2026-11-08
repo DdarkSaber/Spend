@@ -66,7 +66,7 @@ internal fun DaysScreen(
 ) {
     val t = LocalTones.current
     val context = androidx.compose.ui.platform.LocalContext.current
-    var range by remember { mutableStateOf(0) } // 0 = 7 days, 1 = salary month, 2 = 4 months
+    var range by remember { mutableStateOf(0) } // 0 = 7 days, 1 = salary month, 2 = 4 months, 3 = all history
     var month by remember { mutableStateOf(YearMonth.from(snap.today)) }
     var selected by remember { mutableStateOf(snap.today) }
     // The calendar goes back to the first month with any data (all imported history), not a fixed window.
@@ -108,7 +108,7 @@ internal fun DaysScreen(
             }
         }
         if (snap.unusual.isNotEmpty()) item { WorthALookPanel(snap.unusual) }
-        item { Segmented(listOf("7 Days", "Month", "4 Months"), range, { range = it }) }
+        item { Segmented(listOf("7 Days", "Month", "4 Months", "All"), range, { range = it }) }
         if (snap.rows.isEmpty()) {
             item { EmptyLedger(onLoadDemo) }
         } else {

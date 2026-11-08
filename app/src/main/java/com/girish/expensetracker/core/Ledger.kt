@@ -140,6 +140,25 @@ object Ledger {
         return out
     }
 
+    /**
+     * Every salary month from the one holding [day] back to the one holding [first], newest first. Salary days are
+     * looked up in a sorted set, so years of history cost the same as a few months.
+     */
+    fun cyclesSince(day: LocalDate, txns: List<Txn>, first: LocalDate?, max: Int = 600): List<ClosedRange<LocalDate>> {
+        val salaries = java.util.TreeSet<LocalDate>().apply { txns.forEach { if (it.isSalary) add(it.day) } }
+        val out = mutableListOf<ClosedRange<LocalDate>>()
+        var end = day
+        while (out.size < max) {
+            val fallback = lastSalaryDayOnOrBefore(end)
+            val salary = salaries.floor(end)
+            val start = if (salary != null && !salary.isBefore(fallback.minusDays(5))) salary else fallback
+            out += start..end
+            if (first == null || !start.isAfter(first)) break
+            end = start.minusDays(1)
+        }
+        return out
+    }
+
     /** Month amount per category inside [range]. */
     fun byCategoryIn(txns: List<Txn>, range: ClosedRange<LocalDate>): Map<String, Long> =
         txns.filter { it.day in range && monthAmount(it) != 0L }

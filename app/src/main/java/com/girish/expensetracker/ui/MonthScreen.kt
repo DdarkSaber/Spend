@@ -68,7 +68,7 @@ internal fun MonthScreen(
     // Salary months, newest first, back to the first one with any payment. 0 is the running month.
     val months = remember(snap) {
         val first = snap.txns.minOfOrNull { it.day }
-        Ledger.cycles(snap.today, snap.txns, 12).filter { first == null || it.endInclusive >= first }.ifEmpty { listOf(snap.cycleStart..snap.today) }
+        Ledger.cyclesSince(snap.today, snap.txns, first).ifEmpty { listOf(snap.cycleStart..snap.today) }
     }
     var monthIndex by remember(snap) { mutableStateOf(0) }
     val range = months[monthIndex.coerceIn(0, months.lastIndex)]
