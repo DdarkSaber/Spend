@@ -348,7 +348,9 @@ class Repo(val store: Store) {
 
         val cardOfSms = cardOfSms()
         val cardOfShop = cardOfShop()
-        val cacheKey = listOf(profile, learned)
+        val parserVersion = com.girish.expensetracker.core.ParseCache.version(profile, learned, zone.id)
+        val readings = readings(parserVersion)
+        val fresh = HashMap<Long, String>()
         val rows = mutableListOf<Row>()
         val unparsed = mutableListOf<UnparsedSms>()
         val newSources = linkedMapOf<Source, String>()
@@ -364,14 +366,12 @@ class Repo(val store: Store) {
             if (prev != null && kotlin.math.abs(sms.receivedAt - prev) < 600_000L) continue
             val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(sms.receivedAt), zone)
             // Reading an SMS is the slow part, and its result only changes when the owner's cards or taught layouts do.
-            val read = readCached(sms.id, cacheKey) {
-                ReadSms(
-                    SmsReader.read(sms.sender, sms.body, profile, learned),
-                    CardFacts.statement(sms.sender, sms.body, at),
-                    CardFacts.limit(sms.sender, sms.body, at),
-                    SmsReader.bankOf(sms.sender)?.let { bank -> UnusualSpend.foreignCharge(bank, sms.body, at) },
-                )
-            }
+            val read = readings[sms.id] ?: com.girish.expensetracker.core.Reading(
+                SmsReader.read(sms.sender, sms.body, profile, learned),
+                CardFacts.statement(sms.sender, sms.body, at),
+                CardFacts.limit(sms.sender, sms.body, at),
+                SmsReader.bankOf(sms.sender)?.let { bank -> UnusualSpend.foreignCharge(bank, sms.body, at) },
+            ).also { readings[sms.id] = it; fresh[sms.id] = com.girish.expensetracker.core.ParseCache.encode(it) }
             // Statement and limit SMS move no money but tell how each credit card stands.
             read.statement?.let { statements += it }
             read.limit?.let { limits += it }
@@ -403,6 +403,9 @@ class Repo(val store: Store) {
                 else -> Unit
             }
         }
+
+        // New readings are saved, so the next start (and every refresh) skips reading them again.
+        if (fresh.isNotEmpty()) store.saveParsed(parserVersion, fresh)
 
         for (m in store.manualSince(since)) {
             val parsed = ParsedSms(Template.MANUAL, Direction.DEBIT, m.amountPaise, CASH, m.note, m.day, null, m.category)
@@ -544,16 +547,22 @@ class Repo(val store: Store) {
         return kept?.id
     }
 
-    /** What reading one SMS gave; kept between snapshots. */
-    private class ReadSms(val result: ReadResult, val statement: CardStatement?, val limit: LimitSeen?, val foreign: Unusual?)
+    // Readings of stored alerts by SMS id, for one parser version: loaded from the parse cache once, then kept in memory.
+    private var readingsMemo = java.util.concurrent.ConcurrentHashMap<Long, com.girish.expensetracker.core.Reading>()
+    private var readingsVersion: Long? = null
+    private var readingsGeneration = -1
 
-    private val readCache = HashMap<Long, ReadSms>()
-    private var readCacheKey: Any? = null
-
-    /** The cached reading of SMS [id], valid while [key] (the owner's cards and taught layouts) is unchanged. */
-    private fun readCached(id: Long, key: Any, read: () -> ReadSms): ReadSms = synchronized(readCache) {
-        if (readCacheKey != key) { readCache.clear(); readCacheKey = key }
-        readCache.getOrPut(id, read)
+    /** The readings saved for parser [version]; any other version's are forgotten. */
+    @Synchronized
+    private fun readings(version: Long): MutableMap<Long, com.girish.expensetracker.core.Reading> {
+        if (readingsVersion != version || readingsGeneration != store.generation) {
+            val memo = java.util.concurrent.ConcurrentHashMap<Long, com.girish.expensetracker.core.Reading>()
+            for ((id, text) in store.parsedCache(version)) com.girish.expensetracker.core.ParseCache.decode(text)?.let { memo[id] = it }
+            readingsMemo = memo
+            readingsVersion = version
+            readingsGeneration = store.generation
+        }
+        return readingsMemo
     }
 
     // Shop -> card for card SMS without a card number: "BANK|shop=last4".
