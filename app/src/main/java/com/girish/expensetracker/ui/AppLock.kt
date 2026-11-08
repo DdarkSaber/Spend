@@ -36,7 +36,15 @@ internal class AppLock(private val activity: ComponentActivity) {
         hideFromRecents(enabled.value)
     }
 
-    fun unlock() = prompt("Unlock Spend") { locked.value = false }
+    fun unlock() {
+        // With no screen lock there is nothing to unlock with: open, and turn the lock off.
+        if (!activity.getSystemService(KeyguardManager::class.java).isDeviceSecure) {
+            locked.value = false
+            if (enabled.value) save(false)
+            return
+        }
+        prompt("Unlock Spend") { locked.value = false }
+    }
 
     /** Turning it on asks once, so the owner knows their fingerprint/PIN works before being locked out. */
     fun setEnabled(on: Boolean) {
@@ -88,6 +96,13 @@ internal class AppLock(private val activity: ComponentActivity) {
                 // Unlock button never looks dead; tapping it again opens a fresh prompt.
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
                     showing = null
+                    // The phone can't ask at all (screen lock removed, sensor unavailable): never strand the owner.
+                    if (errorCode in cannotAsk) {
+                        locked.value = false
+                        save(false)
+                        Toast.makeText(activity, "App lock turned off: this phone has no screen lock to unlock with", Toast.LENGTH_LONG).show()
+                        return
+                    }
                     if (errorCode != BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED && errorCode != BiometricPrompt.BIOMETRIC_ERROR_CANCELED) {
                         Toast.makeText(activity, errString ?: "Couldn't unlock", Toast.LENGTH_SHORT).show()
                     }
@@ -96,6 +111,11 @@ internal class AppLock(private val activity: ComponentActivity) {
     }
 
     private companion object {
+        val cannotAsk = setOf(
+            BiometricPrompt.BIOMETRIC_ERROR_NO_DEVICE_CREDENTIAL,
+            BiometricPrompt.BIOMETRIC_ERROR_HW_NOT_PRESENT,
+            BiometricPrompt.BIOMETRIC_ERROR_HW_UNAVAILABLE,
+        )
         const val KEY = "lock"
         const val GRACE_MS = 30_000L
     }
