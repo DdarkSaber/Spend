@@ -61,7 +61,7 @@ data class SavingsMonth(val start: LocalDate, val salaryPaise: Long, val spentPa
 object Savings {
     /** Months (newest last) that had a salary credit; months with no salary are left out rather than shown as -100%. */
     fun months(txns: List<Txn>, cycles: List<ClosedRange<LocalDate>>): List<SavingsMonth> = cycles.sortedBy { it.start }.mapNotNull { r ->
-        val salary = txns.filter { it.isSalary && it.day in r }.sumOf { it.amountPaise }
+        val salary = Ledger.salariesFor(txns, r).sumOf { it.amountPaise }
         if (salary <= 0) null else SavingsMonth(r.start, salary, txns.filter { it.day in r }.sumOf(Ledger::monthAmount))
     }
 }

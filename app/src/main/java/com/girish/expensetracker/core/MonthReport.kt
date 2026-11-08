@@ -46,8 +46,9 @@ object MonthReports {
             range = range,
             byCategory = Ledger.byCategoryIn(txns, range),
             before = beforeRange?.let { Ledger.byCategoryIn(txns, it) }.orEmpty(),
-            salaryPaise = inMonth.filter { it.isSalary }.sumOf { it.amountPaise },
-            salaryDay = inMonth.filter { it.isSalary }.maxOfOrNull { it.day },
+            // The salary this month is lived on: credited from the 20th of the month before (see Ledger.salaryMonth).
+            salaryPaise = Ledger.salariesFor(txns, range).sumOf { it.amountPaise },
+            salaryDay = Ledger.salariesFor(txns, range).maxOfOrNull { it.day },
             payments = counted.count { Ledger.monthAmount(it) > 0 },
             biggestDay = counted.groupBy { it.day }.mapValues { (_, l) -> l.sumOf(Ledger::todayAmount) }.maxByOrNull { it.value }
                 ?.takeIf { it.value > 0 }?.toPair(),

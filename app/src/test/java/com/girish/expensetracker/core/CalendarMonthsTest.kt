@@ -58,9 +58,17 @@ class CalendarMonthsTest {
         assertTrue(!r.running)
         assertTrue(SalaryPeriodReports.of(txns, p[2], LocalDate.of(2026, 11, 8)).running)
 
-        // The calendar month of August still shows both credits.
-        val aug = MonthReports.of(txns, LocalDate.of(2026, 8, 1)..LocalDate.of(2026, 8, 31), null, running = false)
-        assertEquals((384683L + 157887L) * 100, aug.salaryPaise)
+        // A salary from the 20th on is what the next month is lived on: 7 Aug counts for August, 28 Aug for September,
+        // 28 Sep for October, and the running November has the 28 Oct salary.
+        fun salaryOf(m: Int) = MonthReports.of(txns, LocalDate.of(2026, m, 1)..LocalDate.of(2026, m, 1).withDayOfMonth(LocalDate.of(2026, m, 1).lengthOfMonth()), null, running = false)
+        assertEquals(384683L * 100, salaryOf(8).salaryPaise)
+        assertEquals(157887L * 100, salaryOf(9).salaryPaise)
+        assertEquals(LocalDate.of(2026, 8, 28), salaryOf(9).salaryDay)
+        assertEquals(115065L * 100, salaryOf(10).salaryPaise)
+        assertEquals(115065L * 100, salaryOf(11).salaryPaise)
+        assertEquals(java.time.YearMonth.of(2026, 10), Ledger.salaryMonth(LocalDate.of(2026, 9, 28)))
+        assertEquals(java.time.YearMonth.of(2027, 1), Ledger.salaryMonth(LocalDate.of(2026, 12, 30)))
+        assertEquals(java.time.YearMonth.of(2026, 8), Ledger.salaryMonth(LocalDate.of(2026, 8, 7)))
     }
 
     @Test fun monthsWithoutSalaryAndLongGapsAreHandled() {

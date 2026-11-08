@@ -86,7 +86,7 @@ class InsightsTest {
         val txns = listOf(
             t("2026-09-28", 100_000, null, Kind.INCOME, "Salary", salary = true), t("2026-10-05", 30_000, "RENT", cat = "Rent"), t("2026-10-10", 10_000, "AMAZON"),
         )
-        val m = Savings.months(txns, listOf(LocalDate.of(2026, 9, 28)..LocalDate.of(2026, 10, 27), LocalDate.of(2026, 8, 28)..LocalDate.of(2026, 9, 27))).single()
+        val m = Savings.months(txns, listOf(LocalDate.of(2026, 10, 1)..LocalDate.of(2026, 10, 31), LocalDate.of(2026, 9, 1)..LocalDate.of(2026, 9, 30))).single()
         assertEquals(0.6, m.rate, 1e-9)
     }
 

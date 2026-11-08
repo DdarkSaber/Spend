@@ -43,7 +43,7 @@ import java.time.LocalDate
 /** The salary credits that fall in [range], each with the salary period it belongs to (an extra payout opens its period). */
 internal fun salariesIn(snap: Snapshot, range: ClosedRange<LocalDate>): List<Pair<Txn, SalaryPeriod>> {
     val periods = Ledger.salaryPeriods(snap.txns, snap.today)
-    return snap.txns.filter { it.isSalary && it.day in range }.sortedBy { it.day }
+    return com.girish.expensetracker.core.Ledger.salariesFor(snap.txns, range).sortedBy { it.day }
         .mapNotNull { s -> periods.firstOrNull { it.contains(s) }?.let { s to it } }
 }
 
@@ -63,7 +63,7 @@ internal fun MonthSalaries(snap: Snapshot, range: ClosedRange<LocalDate>, onOpen
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Salary ${rupees(s.amountPaise)} · ${s.day.format(dayMonth)}", style = MaterialTheme.typography.titleSmall, color = t.ink)
+                    Text("Salary ${rupees(s.amountPaise)} · credited ${s.day.format(dayMonth)}", style = MaterialTheme.typography.titleSmall, color = t.ink)
                     Text(
                         if (extra) "extra payout · part of the ${p.start.format(dayMonth)} salary" else "see what it paid for until the next salary",
                         style = MaterialTheme.typography.bodySmall, color = t.ink2,

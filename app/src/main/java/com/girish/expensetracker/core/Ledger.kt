@@ -152,6 +152,19 @@ object Ledger {
         return ym.atDay(1)..(if (back == 0) day else ym.atEndOfMonth())
     }
 
+    /** A salary credited on or after this day of the month is what the next month is lived on. */
+    const val NEXT_MONTH_FROM_DAY = 20
+
+    /** The month a salary credit is for: 28 Sep -> October, 7 Aug (joining pay) -> August. */
+    fun salaryMonth(day: LocalDate): YearMonth =
+        YearMonth.from(day).let { if (day.dayOfMonth >= NEXT_MONTH_FROM_DAY) it.plusMonths(1) else it }
+
+    /** Salary credits that count for the calendar month starting at [range]'s start (some were credited the month before). */
+    fun salariesFor(txns: List<Txn>, range: ClosedRange<LocalDate>): List<Txn> {
+        val ym = YearMonth.from(range.start)
+        return txns.filter { it.isSalary && salaryMonth(it.day) == ym }
+    }
+
     /** A salary credit this soon after the previous one is an extra payout (joining pay, bonus), not a new period. */
     const val EXTRA_PAYOUT_DAYS = 25
 

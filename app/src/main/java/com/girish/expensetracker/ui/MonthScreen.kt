@@ -229,7 +229,7 @@ private fun SalaryHistory(snap: Snapshot, onOpen: (java.time.LocalDate) -> Unit)
             val period = periods.firstOrNull { it.contains(r.txn) }
             Row(Modifier.fillMaxWidth().clickable(enabled = period != null) { period?.let { onOpen(it.start) } }.padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(cycleMonth(r.txn.day) + " " + r.txn.day.year + if (period != null && period.salary !== r.txn) " · extra payout" else "", style = MaterialTheme.typography.titleSmall, color = t.ink)
+                    Text(Ledger.salaryMonth(r.txn.day).let { cycleMonth(it.atDay(1)) + " " + it.year } + if (period != null && period.salary !== r.txn) " · extra payout" else "", style = MaterialTheme.typography.titleSmall, color = t.ink)
                     Text("credited ${r.txn.day.format(dayMonth)}", style = MaterialTheme.typography.bodySmall, color = t.ink2)
                 }
                 Column(horizontalAlignment = Alignment.End) {
