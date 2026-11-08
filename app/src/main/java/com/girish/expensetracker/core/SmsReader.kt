@@ -219,6 +219,10 @@ internal object Layouts {
         Layout(Regex("^Rs\\.?$AMT spent on your SBI Credit Card ending (\\d{4}) at (.+?) on (\\d{2}/\\d{2}/\\d{2})", I)) { m ->
             ParsedSms(Template.SBI_CARD_SPENT, Direction.DEBIT, paise(m[1]), card("SBI", m[2]), cleanMerchant(m[3]), Dates.parse(m[4]), null, null)
         },
+        // Truecaller's SBI Card transaction card rebuilt without the card's digits (see TxnCard).
+        Layout(Regex("^Rs\\.?$AMT spent on your SBI Credit Card at (.+?) on (\\d{2}/\\d{2}/\\d{2})", I)) { m ->
+            ParsedSms(Template.SBI_CARD_SPENT, Direction.DEBIT, paise(m[1]), Source("SBI", UNASSIGNED, SourceType.CARD), cleanMerchant(m[2]), Dates.parse(m[3]), null, null)
+        },
         // Dear SBI Cardholder, payment of Rs. 27951.76 for your SBI Credit Card has been successfully processed. ref no : EKT53GV1Z4WTSX.
         Layout(Regex("payment of Rs\\.? ?$AMT for your SBI Credit Card has been successfully processed\\.?(?: ref no ?: ?(\\w+))?", I)) { m ->
             ParsedSms(Template.SBI_CARD_PAYMENT, Direction.CREDIT, paise(m[1]), Source("SBI", "*", SourceType.CARD), null, null, m[2].ifEmpty { null }, null)

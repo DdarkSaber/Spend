@@ -69,9 +69,9 @@ object Audit {
 
     private fun merge(into: JSONObject, from: JSONObject) = from.keys().forEach { into.put(it, from.get(it)) }
 
-    fun notification(context: Context, pkg: String, title: String?, text: String?, bigText: String?, o: Repo.NotifOutcome) =
+    fun notification(context: Context, pkg: String, title: String?, text: String?, bigText: String?, o: Repo.NotifOutcome, extras: String? = null) =
         log(context, JSONObject().apply {
-            put("kind", "notif"); put("pkg", pkg); put("title", title ?: JSONObject.NULL)
+            put("kind", "notif"); put("pkg", pkg); put("title", title ?: JSONObject.NULL); put("extras", extras ?: JSONObject.NULL)
             put("text", text ?: JSONObject.NULL); put("bigText", bigText ?: JSONObject.NULL)
             put("candidate", o.text); put("bankGuess", o.sender ?: JSONObject.NULL); put("gate", o.gate)
             put("decision", o.decision); put("smsId", o.smsId ?: JSONObject.NULL)
