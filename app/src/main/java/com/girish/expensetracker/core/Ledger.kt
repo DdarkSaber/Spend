@@ -14,13 +14,21 @@ object Dedupe {
         setOf(Template.HDFC_ACH_UPDATE, Template.HDFC_ACH_ALERT),
         // HDFC confirms one card bill payment twice ("PAYMENT ... RECEIVED" and "Payment ... was credited").
         setOf(Template.HDFC_CARD_PAYMENT_RECEIVED, Template.HDFC_CARD_PAYMENT_CREDITED),
+        // SBI Card confirms one bill payment twice too: "We have received payment of Rs.X via UPI ... credited to your
+        // SBI Credit Card" (no card number, read generically) and "Dear SBI Cardholder, payment of Rs. X ... processed".
+        setOf(Template.SBI_CARD_PAYMENT, Template.GENERIC_CARD_PAYMENT),
     )
 
     // Which SMS of a family describes the payment best.
     private val preference = listOf(
         Template.HDFC_AUTOPAY_SUCCESS, Template.HDFC_CARD_AMOUNT_SPENT, Template.HDFC_CARD_SPENT,
         Template.HDFC_ACH_UPDATE, Template.HDFC_ACH_ALERT,
+        Template.SBI_CARD_PAYMENT, Template.GENERIC_CARD_PAYMENT,
     )
+
+    // A card payment without a card number ("?", ask which card) and SBI's bank-wide one ("*") are the same payment.
+    private fun familySource(s: Source): Source =
+        if (s.type == SourceType.CARD && s.last4 == UNASSIGNED) s.copy(last4 = "*") else s
 
     private class Entry(val index: Int, var txn: Txn, val templates: MutableSet<Template>)
 
@@ -46,7 +54,7 @@ object Dedupe {
             if (p.ref != null && refs.containsKey(RefKey(p.template, p.ref))) continue
 
             val familyIndex = familyOf[p.template]
-            val fKey = familyIndex?.let { FamilyKey(it, p.source, t.amountPaise, t.day) }
+            val fKey = familyIndex?.let { FamilyKey(it, familySource(p.source), t.amountPaise, t.day) }
             val partner = fKey?.let { k -> byFamily[k]?.firstOrNull { p.template !in it.templates } }
             if (partner == null) {
                 val e = Entry(kept.size, t, mutableSetOf(p.template))

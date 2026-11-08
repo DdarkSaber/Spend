@@ -163,7 +163,9 @@ data class Snapshot(
     val unassignedCardRows: List<Row> by lazy {
         rows.filter { r ->
             val s = r.txn.parsed.source
-            r.smsId != null && s.type == SourceType.CARD && s.last4 == UNASSIGNED && trackedCards.count { it.bank == s.bank } >= 2
+            r.smsId != null && s.type == SourceType.CARD && s.last4 == UNASSIGNED && trackedCards.count { it.bank == s.bank } >= 2 &&
+                // A bank whose cards are all one group (one statement) needs no answer: the group counts these already.
+                cardGroups.none { g -> g.bank == s.bank && trackedCards.filter { it.bank == s.bank }.all { it in g.cards } }
         }.sortedByDescending { it.txn.receivedAt }
     }
 

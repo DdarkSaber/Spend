@@ -290,11 +290,17 @@ internal fun WhichCardPanel(rows: List<Row>, cardsOf: (String) -> List<Source>, 
             Gap(10.dp)
             val tx = r.txn
             val refund = tx.parsed.direction == Direction.CREDIT
+            // Money in on a card is usually a bill payment, sometimes a refund: say which.
+            val inLabel = when (tx.kind) {
+                com.girish.expensetracker.core.Kind.TRANSFER -> "Bill payment"
+                com.girish.expensetracker.core.Kind.REFUND -> "Refund"
+                else -> "Money in"
+            }
             val shop = tx.parsed.counterparty?.takeIf { it.isNotBlank() }
             Row(Modifier.fillMaxWidth().clickable { reading = if (reading == r) null else r }, verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(shop ?: if (refund) "Refund" else "Card spend", style = MaterialTheme.typography.titleSmall, color = t.ink)
-                    Text("${tx.parsed.source.bank} · ${if (refund) "refund" else "spend"} · ${tx.day.format(dm)} · ${if (reading == r) "hide SMS" else "see SMS"}", style = MaterialTheme.typography.bodySmall, color = t.ink2)
+                    Text(shop ?: if (refund) inLabel else "Card spend", style = MaterialTheme.typography.titleSmall, color = t.ink)
+                    Text("${tx.parsed.source.bank} · ${if (refund) inLabel.lowercase() else "spend"} · ${tx.day.format(dm)} · ${if (reading == r) "hide SMS" else "see SMS"}", style = MaterialTheme.typography.bodySmall, color = t.ink2)
                 }
                 Text((if (refund) "+" else "") + rupeesExact(tx.amountPaise), style = AmountStyle, color = if (refund) t.accent else t.ink)
             }
