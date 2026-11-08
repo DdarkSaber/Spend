@@ -23,7 +23,12 @@ internal class AppLock(private val activity: ComponentActivity) {
     val enabled = mutableStateOf(prefs.getBoolean(KEY, false))
     val locked = mutableStateOf(enabled.value)
 
-    fun onStop() { hiddenAt = SystemClock.elapsedRealtime() }
+    fun onStop() {
+        hiddenAt = SystemClock.elapsedRealtime()
+        // A prompt left open in the background is cancelled by the system; forget it so the next start asks again.
+        showing?.cancel()
+        showing = null
+    }
 
     fun onStart() {
         if (enabled.value && hiddenAt > 0 && SystemClock.elapsedRealtime() - hiddenAt > GRACE_MS) locked.value = true
@@ -62,13 +67,31 @@ internal class AppLock(private val activity: ComponentActivity) {
         }
     }
 
+    // The prompt on screen now, if any: a second one (app start + an Unlock tap) would cancel the first silently.
+    private var showing: CancellationSignal? = null
+
     private fun show(title: String, onSuccess: () -> Unit) {
+        if (showing != null) return
+        val signal = CancellationSignal()
+        showing = signal
         BiometricPrompt.Builder(activity)
             .setTitle(title)
             .setAllowedAuthenticators(BIOMETRIC_STRONG or DEVICE_CREDENTIAL)
             .build()
-            .authenticate(CancellationSignal(), activity.mainExecutor, object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) = onSuccess()
+            .authenticate(signal, activity.mainExecutor, object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    showing = null
+                    onSuccess()
+                }
+
+                // Closed without success (cancelled, another window took over, too many tries): say why, so the
+                // Unlock button never looks dead; tapping it again opens a fresh prompt.
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence?) {
+                    showing = null
+                    if (errorCode != BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED && errorCode != BiometricPrompt.BIOMETRIC_ERROR_CANCELED) {
+                        Toast.makeText(activity, errString ?: "Couldn't unlock", Toast.LENGTH_SHORT).show()
+                    }
+                }
             })
     }
 
