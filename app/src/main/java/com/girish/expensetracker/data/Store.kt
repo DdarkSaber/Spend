@@ -87,6 +87,37 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, STOR
         }
     }
 
+    /** What the owner said about each account or card (status, add-on, linked account, group, label). */
+    fun sourceMetas(): Map<com.girish.expensetracker.core.Source, com.girish.expensetracker.core.SourceMeta> =
+        readableDatabase.rawQuery("SELECT bank, last4, type, status, owner, linked_to, card_group, label FROM source_meta", null).use { c ->
+            buildMap {
+                while (c.moveToNext()) {
+                    val type = runCatching { SourceType.valueOf(c.getString(2)) }.getOrNull() ?: continue
+                    val src = Source(c.getString(0), c.getString(1), type)
+                    put(src, com.girish.expensetracker.core.SourceMeta(
+                        source = src,
+                        status = runCatching { com.girish.expensetracker.core.SourceStatus.valueOf(c.getString(3).uppercase()) }.getOrDefault(com.girish.expensetracker.core.SourceStatus.AUTO),
+                        owner = if (c.getString(4) == "addon_paid_by_other") com.girish.expensetracker.core.SourceOwner.ADDON_PAID_BY_OTHER else com.girish.expensetracker.core.SourceOwner.MINE,
+                        linkedTo = c.getString(5)?.let(com.girish.expensetracker.core.SourceMeta::parseKey),
+                        cardGroup = c.getString(6),
+                        label = c.getString(7),
+                    ))
+                }
+            }
+        }
+
+    fun setSourceMeta(m: com.girish.expensetracker.core.SourceMeta) {
+        val v = ContentValues().apply {
+            put("bank", m.source.bank); put("last4", m.source.last4); put("type", m.source.type.name)
+            put("status", m.status.name.lowercase())
+            put("owner", if (m.isAddOn) "addon_paid_by_other" else "mine")
+            put("linked_to", m.linkedTo?.let(com.girish.expensetracker.core.SourceMeta::keyOf))
+            put("card_group", m.cardGroup)
+            put("label", m.label)
+        }
+        writableDatabase.insertWithOnConflict("source_meta", null, v, SQLiteDatabase.CONFLICT_REPLACE)
+    }
+
     /** Bumped whenever SMS ids may have changed meaning (a restore), so in-memory caches start over. */
     @Volatile var generation = 0
         private set

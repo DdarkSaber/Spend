@@ -46,6 +46,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
+
     buildFeatures {
         compose = true
         buildConfig = true
@@ -64,6 +68,11 @@ dependencies {
     implementation("androidx.core:core-ktx:1.19.1")
 
     testImplementation("junit:junit:4.13.2")
+    // Android's org.json is only a stub in JVM tests; the real library lets the history-file parser be tested.
+    testImplementation("org.json:json:20250517")
+    // Runs the real SQLite store (migration, history import) in JVM tests.
+    testImplementation("org.robolectric:robolectric:4.16")
+    testImplementation("androidx.test:core:1.7.0")
 }
 
 // Local-only: `-Dcorpus=<tsv>` runs CorpusReport over a real SMS export kept outside the repo.

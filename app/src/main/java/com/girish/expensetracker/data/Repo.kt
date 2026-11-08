@@ -86,7 +86,22 @@ data class Snapshot(
     /** Row key -> the owner's tag ("Goa trip", "office"). */
     val tags: Map<String, String> = emptyMap(),
     val trips: List<Trip> = emptyList(),
+    /** What the owner said about each account or card. */
+    val sourceMeta: Map<Source, com.girish.expensetracker.core.SourceMeta> = emptyMap(),
+    /** Each account or card's latest transaction day (debit cards under their own number). */
+    val lastActivity: Map<Source, LocalDate> = emptyMap(),
+    /** Accounts and cards the owner chose to ignore: never counted. */
+    val ignored: Set<Source> = emptySet(),
 ) {
+    fun statusOf(s: Source): com.girish.expensetracker.core.SourceStatus =
+        com.girish.expensetracker.core.SourceMeta.effective(sourceMeta[s], lastActivity[s], today)
+
+    /** Active, the owner's own, and not a debit card shown under its account: the cards credit health is about. */
+    private fun healthCard(s: Source): Boolean {
+        val m = sourceMeta[s]
+        return statusOf(s) == com.girish.expensetracker.core.SourceStatus.ACTIVE && m?.isAddOn != true && m?.linkedTo == null
+    }
+
     val txns: List<Txn> by lazy { rows.map { it.txn } }
     val todayTotal: Long by lazy { Ledger.today(txns, today) }
     val monthTotal: Long by lazy { Ledger.month(txns, today) }
@@ -97,6 +112,7 @@ data class Snapshot(
         // "*" and "?" stand for "some card of this bank", not a card of their own.
         fun real(s: Source) = s.type == SourceType.CARD && s.last4 != "*" && s.last4 != UNASSIGNED
         (owner?.tracked?.filter(::real) ?: txns.map { it.parsed.source }.filter(::real).distinct())
+            .filter(::healthCard)
             .sortedWith(compareBy({ it.bank }, { it.last4 }))
     }
 
@@ -268,14 +284,70 @@ class Repo(val store: Store) {
         if (items.isEmpty()) return 0
         val profile = profile()
         val learned = store.learned()
-        return store.inTransaction {
-            items.count { m ->
-                when (SmsReader.read(m.sender, m.body, profile, learned)) {
-                    ReadResult.NotBank, ReadResult.Promo -> false
-                    else -> store.insertSmsId(m.sender, m.body, m.receivedAt, m.channel) != null
+        return store.inTransaction { items.count { store(it, profile, learned) } }
+    }
+
+    // True when [m] is a bank alert that was not stored before.
+    private fun store(m: Incoming, profile: Profile, learned: List<LearnedLayout>): Boolean =
+        when (SmsReader.read(m.sender, m.body, profile, learned)) {
+            ReadResult.NotBank, ReadResult.Promo -> false
+            else -> store.insertSmsId(m.sender, m.body, m.receivedAt, m.channel) != null
+        }
+
+    /** Per channel of a history file: what it held and how much of it was new. */
+    data class ArchiveCount(val channel: String, val alerts: Int, val alertsNew: Int, val rows: Int, val rowsNew: Int)
+    data class ArchiveResult(val counts: List<ArchiveCount>, val rejected: List<com.girish.expensetracker.core.Archive.Rejected>)
+
+    /**
+     * Stores a parsed history file: alerts like SMS (with their archive channel), rows as statement rows. 500 items per
+     * transaction, with (done, total) progress. Importing the same file again adds nothing.
+     */
+    fun importArchive(file: com.girish.expensetracker.core.Archive.Parsed, onProgress: (Int, Int) -> Unit = { _, _ -> }): ArchiveResult {
+        val profile = profile()
+        val learned = store.learned()
+        val counts = linkedMapOf<String, IntArray>() // alerts, alertsNew, rows, rowsNew
+        var done = 0
+        for (chunk in file.items.chunked(500)) {
+            store.inTransaction {
+                for (item in chunk) {
+                    val c = counts.getOrPut(item.channel) { IntArray(4) }
+                    when (item) {
+                        is com.girish.expensetracker.core.Archive.Item.Alert -> {
+                            c[0]++
+                            if (store(Incoming(item.sender, item.body, item.atMillis, item.channel), profile, learned)) c[1]++
+                        }
+                        is com.girish.expensetracker.core.Archive.Item.Row -> {
+                            c[2]++
+                            c[3] += store.addStatementRows(item.source, listOf(StatementRow(item.day, item.amountPaise, item.debit, item.description)))
+                        }
+                    }
                 }
             }
+            done += chunk.size
+            onProgress(done, file.items.size)
         }
+        return ArchiveResult(counts.map { (ch, c) -> ArchiveCount(ch, c[0], c[1], c[2], c[3]) }, file.rejected)
+    }
+
+    /** Saves what the owner said about [m]'s account or card; ignoring it stops it being counted anywhere. */
+    fun saveSourceMeta(m: com.girish.expensetracker.core.SourceMeta) {
+        val k = key(m.source)
+        val wasIgnored = k in lines(KEY_IGNORED)
+        store.setSourceMeta(m)
+        if (m.status == com.girish.expensetracker.core.SourceStatus.IGNORED) {
+            store.untrack(m.source)
+            store.setSetting(KEY_IGNORED, (lines(KEY_IGNORED) + k).joinToString(NL))
+        } else if (wasIgnored || m.source !in store.tracked()) {
+            store.setSetting(KEY_IGNORED, (lines(KEY_IGNORED) - k).joinToString(NL))
+            store.track(m.source)
+        }
+    }
+
+    /** After a history import: keep [keep] (tracked, shown as past when old) and ignore [drop]. */
+    fun keepOlderSources(keep: Set<Source>, drop: Set<Source>) {
+        val metas = store.sourceMetas()
+        keep.forEach { saveSourceMeta((metas[it] ?: com.girish.expensetracker.core.SourceMeta(it)).copy(status = com.girish.expensetracker.core.SourceStatus.AUTO)) }
+        drop.forEach { saveSourceMeta((metas[it] ?: com.girish.expensetracker.core.SourceMeta(it)).copy(status = com.girish.expensetracker.core.SourceStatus.IGNORED)) }
     }
 
     /** Like [ingest], returning the stored SMS's id (for the quick-tag notification). */
@@ -366,6 +438,9 @@ class Repo(val store: Store) {
 
         val cardOfSms = cardOfSms()
         val cardOfShop = cardOfShop()
+        val metas = store.sourceMetas()
+        // Each account or card's latest transaction day, before debit cards are moved under their accounts.
+        val lastActivity = HashMap<Source, LocalDate>()
         val parserVersion = com.girish.expensetracker.core.ParseCache.version(profile, learned, zone.id)
         val readings = readings(parserVersion)
         val fresh = HashMap<Long, String>()
@@ -400,6 +475,9 @@ class Repo(val store: Store) {
                         (cardOfSms[sms.id] ?: t.parsed.counterparty?.let { cardOfShop["$bank|${normalizeName(it)}"] })
                             ?.let { d -> t = t.copy(parsed = t.parsed.copy(source = Source(bank, d, SourceType.CARD))) }
                     }
+                    lastActivity.merge(t.parsed.source, t.day) { a, b -> maxOf(a, b) }
+                    // A debit card linked to its account: shown under the account and counted once there.
+                    metas[t.parsed.source]?.linkedTo?.let { acc -> t = t.copy(parsed = t.parsed.copy(source = acc)) }
                     val forced = overrides[sms.id]
                     if (forced != null && (t.kind == Kind.SPEND || t.kind == Kind.LENT)) {
                         t = t.copy(
@@ -433,7 +511,9 @@ class Repo(val store: Store) {
         // (source, amount) -> days with such a payment, so each row is checked in O(1) instead of against every SMS.
         val smsDays = HashMap<Pair<Source, Long>, MutableSet<LocalDate>>()
         for (r in rows) smsDays.getOrPut(r.txn.parsed.source to r.txn.amountPaise) { HashSet() } += r.txn.day
-        for ((source, s) in store.statementRowsSince(since)) {
+        for ((rowSource, s) in store.statementRowsSince(since)) {
+            lastActivity.merge(rowSource, s.day) { a, b -> maxOf(a, b) }
+            val source = metas[rowSource]?.linkedTo ?: rowSource
             // Covered when an SMS for the same source and amount is within 2 days.
             val covered = smsDays[source to s.amountPaise]?.let { days -> (-2L..2L).any { s.day.plusDays(it) in days } } == true
             if (covered) continue
@@ -465,6 +545,10 @@ class Repo(val store: Store) {
             foreign = foreign,
             tags = store.tags(),
             trips = store.trips(),
+            sourceMeta = metas,
+            lastActivity = lastActivity,
+            ignored = (ignored.mapNotNull(com.girish.expensetracker.core.SourceMeta::parseKey) +
+                metas.values.filter { it.status == com.girish.expensetracker.core.SourceStatus.IGNORED }.map { it.source }).toSet(),
         )
     }
 
