@@ -1,5 +1,6 @@
 package com.girish.expensetracker.ui
 
+import androidx.compose.material.icons.outlined.Contacts
 import androidx.compose.material.icons.outlined.EmojiEvents
 import androidx.compose.material.icons.outlined.AccountBalance
 import androidx.compose.material.icons.outlined.NotificationsActive
@@ -82,6 +83,7 @@ internal class MoreActions(
     val askCardGroupsAgain: (String) -> Unit = {},
     val alertApps: () -> Unit = {},
     val debugBundle: () -> Unit = {},
+    val matchContacts: () -> Unit = {},
 )
 
 /** Switches and their current values. */
@@ -113,6 +115,8 @@ internal fun MoreScreen(snap: Snapshot, setup: Setup, isNew: (Row) -> Boolean, o
                 Action(Icons.Outlined.CreditCard, "Accounts, name & salary day", "What the app learned from your SMS", actions.reviewSetup)
                 Hairline()
                 Action(Icons.Outlined.AccountBalance, "Cards and accounts", "Active, past and ignored · add-on and debit cards", actions.sources)
+                Hairline()
+                Action(Icons.Outlined.Contacts, "Match with contacts", "People under your contacts' saved names · matched on the phone", actions.matchContacts)
                 Hairline()
                 Action(Icons.Outlined.Savings, "Budgets", "Monthly and per category, with alerts", actions.budgets)
                 Hairline()

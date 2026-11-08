@@ -35,6 +35,7 @@ internal sealed interface Sheet {
     data class SourceSettings(val source: com.girish.expensetracker.core.Source) : Sheet
     data class OlderSources(val result: Repo.ArchiveResult) : Sheet
     data object AlertApps : Sheet
+    data object PayeeReview : Sheet
 }
 
 /** Full-screen pages that sit above the tabs (back returns to the tab). */

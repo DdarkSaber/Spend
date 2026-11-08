@@ -209,6 +209,8 @@ fun AppRoot(
                         s,
                         onSettle = { d -> ctl.act { settleDebt(d, s.rows); "${d.name} is settled" } },
                         onGroup = { ctl.sheet = Sheet.Group(it) },
+                        onReviewPayees = { ctl.sheet = Sheet.PayeeReview },
+                        onDismissReview = { ctl.act { dismissPayeeReview(); "OK. Tap ✎ on any payment to change it later" } },
                     ) { ctl.page = Page.Person(it.key) }
                     Tab.MORE -> MoreScreen(
                         snap = s, setup = setup, isNew = isNew, onRow = openRow,
@@ -288,6 +290,7 @@ private fun moreActions(ctl: AppController, s: Snapshot, pickers: Pickers, onBat
     },
     importStatement = pickers.openCsv,
     importHistory = pickers.openArchive,
+    matchContacts = pickers.matchContacts,
     sources = { ctl.page = Page.Sources },
     alertApps = { ctl.sheet = Sheet.AlertApps },
     debugBundle = {

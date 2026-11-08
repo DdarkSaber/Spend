@@ -134,6 +134,10 @@ class PayeeRules(private val rules: Map<String, Rule>) {
 
     fun lookup(name: String): Rule? = rules[ruleKey(name)]
 
+    /** These rules plus [defaults] for names that have no rule of their own (the owner's own retags always win). */
+    fun withDefaults(defaults: Map<String, Rule>): PayeeRules =
+        if (defaults.isEmpty()) this else PayeeRules(defaults.mapKeys { ruleKey(it.key) } + rules)
+
     companion object {
         val EMPTY = PayeeRules(emptyMap())
         fun of(vararg pairs: Pair<String, Rule>) = PayeeRules(pairs.associate { ruleKey(it.first) to it.second })

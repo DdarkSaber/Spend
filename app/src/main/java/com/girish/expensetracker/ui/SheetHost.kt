@@ -50,6 +50,10 @@ internal fun SheetHost(ctl: AppController, snap: Snapshot, pickers: Pickers) {
             )
         }
 
+        Sheet.PayeeReview -> PayeeReviewSheet(snap.payeeReview, onDismiss = close) { shops, persons ->
+            ctl.act { answerPayees(shops, persons); "Saved: ${count(shops.size, "shop")}, ${count(persons.size, "person")}" }
+        }
+
         is Sheet.Split -> SplitSheet(
             row = sheet.row, people = people(snap), groups = snap.plan.groups,
             pickedContact = pickers.contactName(), onPickContact = pickers.pickContact, onContactUsed = pickers.contactUsed,

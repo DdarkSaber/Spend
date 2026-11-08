@@ -49,6 +49,7 @@ import com.girish.expensetracker.core.Direction
 import com.girish.expensetracker.core.Ledger
 import com.girish.expensetracker.core.ParsedSms
 import com.girish.expensetracker.core.PayeeType
+import com.girish.expensetracker.core.PayeeRules
 import com.girish.expensetracker.core.ReadResult
 import com.girish.expensetracker.core.SmsReader
 import com.girish.expensetracker.core.Source
@@ -100,6 +101,10 @@ data class Snapshot(
     val collapses: List<Pair<Row, Row>> = emptyList(),
     /** Accounts and cards the owner chose to ignore: never counted. */
     val ignored: Set<Source> = emptySet(),
+    /** Payee label -> phone contact name, for payees matched to exactly one contact. */
+    val contactNames: Map<String, String> = emptyMap(),
+    /** Payees that are a person only by default, for the one-time "Shop or person?" review. */
+    val payeeReview: List<com.girish.expensetracker.core.PayeeReview> = emptyList(),
 ) {
     fun statusOf(s: Source): com.girish.expensetracker.core.SourceStatus =
         com.girish.expensetracker.core.SourceMeta.effective(sourceMeta[s], lastActivity[s], today)
@@ -253,6 +258,8 @@ fun sourceKey(s: Source) = "${s.bank}|${s.last4}|${s.type}"
 data class Owner(val state: String, val displayName: String, val salaryDay: Int, val tracked: Set<Source>)
 
 private const val KEY_SETUP = "setup"
+private const val KEY_CONTACT_MATCHES = "contact_matches"
+private const val KEY_PAYEE_REVIEW_DISMISSED = "payee_review_dismissed"
 private const val KEY_NAME = "display_name"
 private const val KEY_SALARY_DAY = "salary_day"
 private const val KEY_SELF_NAMES = "self_names"
@@ -483,7 +490,10 @@ class Repo(val store: Store) {
         val since = today.minusDays(days)
         val sinceMillis = since.atStartOfDay(zone).toInstant().toEpochMilli()
         val profile = profile()
-        val rules = store.rules()
+        val ownRules = store.rules()
+        // A payee matched to one phone contact is a person (the owner's own retags still win).
+        val contactNames = contactMatches()
+        val rules = ownRules.withDefaults(contactNames.keys.associateWith { PayeeRules.Rule(PayeeType.PERSON, "People") })
         val ignored = lines(KEY_IGNORED)
         val overrides = store.overrides()
         val splits = store.splits()
@@ -614,10 +624,26 @@ class Repo(val store: Store) {
             sourceMeta = metas,
             collapses = l2.collapses.map { it.kept to it.dropped },
             lastActivity = lastActivity,
+            contactNames = contactNames,
+            payeeReview = if (store.setting(KEY_PAYEE_REVIEW_DISMISSED) == "1") emptyList()
+                else com.girish.expensetracker.core.PayeeReviews.of(deduped.map { it.txn }, { ownRules.lookup(it) != null }, contactNames.keys),
             ignored = (ignored.mapNotNull(com.girish.expensetracker.core.SourceMeta::parseKey) +
                 metas.values.filter { it.status == com.girish.expensetracker.core.SourceStatus.IGNORED }.map { it.source }).toSet(),
         )
     }
+
+    /** Payee label -> the phone contact's saved name (matched on the device; only matches are kept). */
+    fun contactMatches(): Map<String, String> = com.girish.expensetracker.core.ContactMatch.decode(store.setting(KEY_CONTACT_MATCHES))
+
+    fun saveContactMatches(m: Map<String, String>) = store.setSetting(KEY_CONTACT_MATCHES, com.girish.expensetracker.core.ContactMatch.encode(m))
+
+    /** "Shop or person?" answers: each saved as a payee rule; the review card is gone once dismissed. */
+    fun answerPayees(shops: Collection<String>, persons: Collection<String>) {
+        shops.forEach { store.setRule(it, PayeeType.MERCHANT, com.girish.expensetracker.core.PayeeGuess.category(it) ?: "Uncategorised") }
+        persons.forEach { store.setRule(it, PayeeType.PERSON, "People") }
+    }
+
+    fun dismissPayeeReview() = store.setSetting(KEY_PAYEE_REVIEW_DISMISSED, "1")
 
     /** Save a layout taught from an unread SMS; that SMS and every later one like it are read from now on. */
     fun teach(layout: LearnedLayout) = store.addLearned(layout)

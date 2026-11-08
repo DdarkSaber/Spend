@@ -73,10 +73,17 @@ class Person(val key: String, val name: String, val labels: List<String>, val ro
 fun people(snap: Snapshot): List<Person> {
     val personal = snap.rows.filter { it.txn.payeeType == PayeeType.PERSON && !it.txn.parsed.counterparty.isNullOrBlank() }
     val labels = personal.map { it.txn.parsed.counterparty!! }.distinct()
-    return People.group(labels).map { group ->
+    // Payees matched to a phone contact are one person under the contact's saved name, whatever the bank spelling.
+    val byContact = labels.filter { it in snap.contactNames }.groupBy { snap.contactNames.getValue(it) }
+    val groups = byContact.map { (name, g) -> name to g } +
+        People.group(labels.filter { it !in snap.contactNames }).map { People.displayName(it) to it }
+    return groups.map { (name, group) ->
         val set = group.toSet()
         val rows = personal.filter { it.txn.parsed.counterparty in set }.sortedByDescending { it.txn.receivedAt }
-        Person(People.key(People.displayName(group)), People.displayName(group), group, rows)
+        Person(People.key(name), name, group, rows)
+    }.groupBy { it.key }.map { (k, ps) ->
+        // A contact and an unmatched spelling with the same name are one person.
+        if (ps.size == 1) ps[0] else Person(k, ps.first().name, ps.flatMap { it.labels }, ps.flatMap { it.rows }.sortedByDescending { it.txn.receivedAt })
     }.sortedByDescending { it.last }
 }
 
@@ -106,6 +113,8 @@ internal fun PeopleScreen(
     snap: Snapshot,
     onSettle: (com.girish.expensetracker.core.Debt) -> Unit = {},
     onGroup: (com.girish.expensetracker.data.FriendGroup?) -> Unit = {},
+    onReviewPayees: () -> Unit = {},
+    onDismissReview: () -> Unit = {},
     onOpen: (Person) -> Unit,
 ) {
     val t = LocalTones.current
@@ -149,6 +158,20 @@ internal fun PeopleScreen(
                     Stat("They paid you back", rupees(gotMonth), sub = "this month"),
                 ),
             )
+        }
+        if (snap.payeeReview.isNotEmpty() && query.isBlank()) item {
+            Panel {
+                PanelHeader("Shop or person?", "${snap.payeeReview.size}")
+                Text(
+                    "${count(snap.payeeReview.size, "payee")} aren't clearly a shop or a person, so they count as people for now. Tap once each; it's remembered.",
+                    style = MaterialTheme.typography.bodyMedium, color = t.ink2,
+                )
+                Gap(12.dp)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    PrimaryButton("Review", onReviewPayees)
+                    SecondaryButton("Not now", onDismissReview)
+                }
+            }
         }
         if (snap.debts.isNotEmpty()) item { OwedPanel(snap.debts, onSettle) }
         if (all.isEmpty()) item {
