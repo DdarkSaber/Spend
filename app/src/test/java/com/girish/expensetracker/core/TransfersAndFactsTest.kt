@@ -40,7 +40,7 @@ class TransfersAndFactsTest {
 
     @Test fun notPairedWhenTooFarApartSameSourceOrLockedOrSalary() {
         val debit = Txn(ParsedSms(Template.GENERIC_DEBIT, Direction.DEBIT, 10_000, sbi, "X", at.toLocalDate(), null, null), Kind.SPEND, PayeeType.PERSON, "Other", at)
-        val late = Txn(ParsedSms(Template.GENERIC_CREDIT, Direction.CREDIT, 10_000, hdfc, "Y", at.toLocalDate().plusDays(3), null, null), Kind.PERSON_CREDIT, PayeeType.PERSON, "Money in", at.plusDays(3))
+        val late = Txn(ParsedSms(Template.GENERIC_CREDIT, Direction.CREDIT, 10_000, hdfc, "X", at.toLocalDate().plusDays(3), null, null), Kind.PERSON_CREDIT, PayeeType.PERSON, "Money in", at.plusDays(3))
         val same = late.copy(parsed = late.parsed.copy(source = sbi, date = at.toLocalDate()))
         val salary = late.copy(parsed = late.parsed.copy(date = at.toLocalDate()), isSalary = true, kind = Kind.INCOME)
         assertEquals(listOf(Kind.SPEND, Kind.PERSON_CREDIT), Transfers.pair(listOf(debit, late), ::own).map { it.kind })
@@ -55,9 +55,25 @@ class TransfersAndFactsTest {
 
     @Test fun eachDebitPairsOnceWithTheNearestCredit() {
         val d = Txn(ParsedSms(Template.GENERIC_DEBIT, Direction.DEBIT, 500, sbi, "X", at.toLocalDate(), null, null), Kind.SPEND, null, "Other", at)
-        val c1 = Txn(ParsedSms(Template.GENERIC_CREDIT, Direction.CREDIT, 500, hdfc, "Y", at.toLocalDate().plusDays(2), null, null), Kind.PERSON_CREDIT, null, "Money in", at.plusDays(2))
+        val c1 = Txn(ParsedSms(Template.GENERIC_CREDIT, Direction.CREDIT, 500, hdfc, "X", at.toLocalDate().plusDays(2), null, null), Kind.PERSON_CREDIT, null, "Money in", at.plusDays(2))
         val c2 = c1.copy(parsed = c1.parsed.copy(date = at.toLocalDate()))
         assertEquals(listOf(Kind.TRANSFER, Kind.PERSON_CREDIT, Kind.TRANSFER), Transfers.pair(listOf(d, c1, c2), ::own).map { it.kind })
+    }
+
+    @Test fun cardSpendAndAFriendsPaybackOfTheSameAmountAreNotATransfer() {
+        // Rs 500 at a shop on the credit card, and a friend paying back Rs 500 into the account the next day.
+        val spend = read("VM-SBICRD-S", "Rs.500.00 spent on your SBI Credit Card ending 1111 at ZOMATO on 12/10/26. Trxn.")
+        val payback = read("VD-HDFCBK-S", "Credit Alert! Rs.500.00 credited to HDFC Bank A/c XX1234 on 13-10-26 from VPA friend77@okicici (UPI 100000000031)", at.plusDays(1))
+        assertEquals(listOf(Kind.SPEND, Kind.PERSON_CREDIT), Transfers.pair(listOf(spend, payback), ::own).map { it.kind })
+    }
+
+    @Test fun payingOneFriendAndBeingPaidByAnotherIsNotATransfer() {
+        val out = read("JD-SBIUPI-S", "Dear UPI user A/C X5678 debited by 1000.00 on date 12Oct26 trf to RAHUL VERMA Refno 100000000040 If not u?")
+        val inn = read("VD-HDFCBK-S", "Credit Alert! Rs.1000.00 credited to HDFC Bank A/c XX1234 on 13-10-26 from VPA priya.nair@okaxis (UPI 100000000041)", at.plusDays(1))
+        assertEquals(listOf(Kind.SPEND, Kind.PERSON_CREDIT), Transfers.pair(listOf(out, inn), ::own).map { it.kind })
+        // A credit that names nobody (an NEFT deposit) still pairs with it.
+        val deposit = Txn(ParsedSms(Template.GENERIC_CREDIT, Direction.CREDIT, 100_000, hdfc, null, at.toLocalDate().plusDays(1), null, null), Kind.INCOME, null, "Money in", at.plusDays(1))
+        assertEquals(listOf(Kind.TRANSFER, Kind.TRANSFER), Transfers.pair(listOf(out, deposit), ::own).map { it.kind })
     }
 
     // ------------------------------------------------------------------ level 2
@@ -89,6 +105,33 @@ class TransfersAndFactsTest {
         val later = R(metro.copy(parsed = metro.parsed.copy(date = at.toLocalDate().plusDays(2))), "notif:com.truecaller")
         val otherCard = R(metro.copy(parsed = metro.parsed.copy(source = Source("SBI", "2222", SourceType.CARD))), "notif:com.truecaller")
         assertEquals(3, l2(R(metro, "sms"), later, otherCard).kept.size)
+    }
+
+    @Test fun twoEqualSpendsADayApartOnTwoChannelsBothCount() {
+        // Rs 100 by SMS on one day and another Rs 100 by Truecaller the next: two payments, not two copies of one.
+        val next = R(metro.copy(parsed = metro.parsed.copy(date = at.toLocalDate().plusDays(1)), receivedAt = at.plusDays(1)), "notif:com.truecaller")
+        val r = l2(R(metro, "sms"), next)
+        assertEquals(2, r.kept.size)
+        assertEquals(0, r.collapses.size)
+        // The same spend told twice within the hour is still one.
+        val copy = R(metro.copy(receivedAt = at.plusMinutes(20)), "notif:com.google.android.gm")
+        assertEquals(1, l2(R(metro, "sms"), copy).kept.size)
+        // An archive alert or statement row only carries a day, so a day's slack stays.
+        val archived = R(metro.copy(parsed = metro.parsed.copy(date = at.toLocalDate().plusDays(1)), receivedAt = at.plusDays(1)), "archive:truecaller")
+        assertEquals(1, l2(R(metro, "sms"), archived).kept.size)
+    }
+
+    @Test fun cardAlertWithoutDigitsIsTheSamePaymentAndTheCopyWithDigitsIsKept() {
+        val noDigits = R(metro.copy(parsed = metro.parsed.copy(source = Source("SBI", UNASSIGNED, SourceType.CARD))), "notif:com.truecaller")
+        val archived = R(metro.copy(receivedAt = at.plusMinutes(1)), "archive:truecaller")
+        // The notification is the better channel, but the archive copy knows the card.
+        val r = l2(noDigits, archived)
+        assertEquals(listOf(archived), r.kept)
+        assertEquals(listOf("notif:com.truecaller"), r.alsoVia[0])
+        assertEquals(listOf(R(metro, "sms")), l2(noDigits, R(metro, "sms")).kept)
+        // Another bank's card, or an account with no digits, never matches it.
+        val otherBank = R(metro.copy(parsed = metro.parsed.copy(source = Source("HDFC", "4321", SourceType.CARD))), "sms")
+        assertEquals(2, l2(noDigits, otherBank).kept.size)
     }
 
     @Test fun threeChannelsCollapseToOneAndStatementRowLoses() {
