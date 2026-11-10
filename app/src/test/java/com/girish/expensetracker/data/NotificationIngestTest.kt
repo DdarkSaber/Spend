@@ -49,6 +49,55 @@ class NotificationIngestTest {
         assertEquals(0, repo.store.smsSince(0).size)
     }
 
+    private val gm = "com.google.android.apps.messaging"
+
+    @Test fun anSmsNotificationKeepsItsRealSender() {
+        val offer = "Convert your SBI Credit Card transactions of the combined value of Rs. 12,345 into Flexipay EMIs. Offer Valid till 15 Nov. Book Now"
+        // Titled with the promotional sender: an offer, as the SMS itself is.
+        val o = repo.ingestNotification(gm, "AX-SBICRD-P", offer, t0, from = "AX-SBICRD-P")
+        assertEquals("gate", o.decision)
+        assertEquals("offer", o.gate)
+        assertEquals("AX-SBICRD-P", o.sender)
+        // A registered sender that is not a bank, even when its text names one.
+        assertEquals("no-bank", repo.ingestNotification(gm, "VM-SHOPPY-S", "Rs.500 paid with your HDFC Bank card 4321 at Shoppy", t0, from = "VM-SHOPPY-S").decision)
+        // A real bank sender is stored under that sender.
+        val real = repo.ingestNotification(gm, "VM-SBICRD-S", spend, t0, from = "vm-sbicrd-s")
+        assertEquals("stored", real.decision)
+        assertEquals("VM-SBICRD-S", repo.store.smsSince(0).single().sender)
+    }
+
+    @Test fun aTextFromAPhoneNumberIsNeverABankAlert() {
+        repo.store.track(Source("SBI", "5678", SourceType.ACCOUNT))
+        val scam = "Rs 5000 debited from your SBI account towards loan repayment. If not you call 9876543210"
+        val o = repo.ingestNotification(gm, "+91 98765 43210", scam, t0, from = "+91 98765 43210")
+        assertEquals("phone-sender", o.gate)
+        assertEquals(0, repo.store.smsSince(0).size)
+    }
+
+    @Test fun anSmsTheReaderTurnedAwayIsNotLetInAsANotification() {
+        repo.store.track(Source("HDFC", "5185", SourceType.ACCOUNT))
+        val friend = "bro I sent Rs 500 to your HDFC Bank a/c 5185 check once"
+        // SMS first (from a saved contact, so the title is a name): turned away, then its notification is too.
+        assertNull(repo.ingestId("+919876543210", friend, t0))
+        val o = repo.ingestNotification(gm, "Arun", friend, t0 + 2_000, from = "Arun")
+        assertEquals("sms-rejected", o.gate)
+        assertEquals(0, repo.store.smsSince(0).size)
+    }
+
+    @Test fun aNotificationCopyStoredFirstIsRemovedWhenItsSmsIsTurnedAway() {
+        repo.store.track(Source("HDFC", "5185", SourceType.ACCOUNT))
+        val friend = "bro I sent Rs 700 to your HDFC Bank a/c 5185 check once"
+        assertEquals("stored", repo.ingestNotification(gm, "Arun", friend, t0, from = "Arun").decision)
+        val before = repo.removedCopies
+        assertNull(repo.ingestId("+919876543210", friend, t0 + 3_000))
+        assertEquals(0, repo.store.smsSince(0).size)
+        assertEquals(before + 1, repo.removedCopies)
+        // A bank alert stored from a notification is untouched by an unrelated turned-away SMS.
+        repo.ingestNotification(tc, "SBI Card", spend, t0)
+        assertNull(repo.ingestId("+919876543210", "see you at 8", t0 + 1_000))
+        assertEquals(1, repo.store.smsSince(0).size)
+    }
+
     @Test fun allowlistDefaultsAndSaves() {
         assertEquals(listOf("com.google.android.apps.messaging", "com.truecaller", "com.google.android.gm"), repo.alertApps().map { it.pkg })
         repo.setAlertApps(repo.alertApps().map { if (it.pkg == "com.google.android.gm") it.copy(enabled = false) else it } + Repo.AlertApp("in.amazon.mShop", "Amazon", true))

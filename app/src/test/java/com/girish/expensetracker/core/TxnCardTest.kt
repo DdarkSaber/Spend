@@ -65,6 +65,19 @@ class TxnCardTest {
         assertNull(TxnCard.rebuild(listOf("₹99", "•  HDFC BANK  •  Shop"), "₹99", day))
     }
 
+    /** The offer that was counted as a spend on 1.2.3 to 1.2.7: an SMS notification titled with its sender. */
+    @Test fun anOfferIsNeverACardSpend() {
+        val offer = "Dear Cardholder, convert your SBI Credit Card transactions of the combined value of Rs. 12,345 into Flexipay EMIs. Offer Valid till 15 Nov. Book Now T&C"
+        assertNull(TxnCard.rebuild(listOf("AX-SBICRD-P", offer), "AX-SBICRD-P", day))
+        // A sender header as the title is an SMS, not a card, whatever the text says.
+        assertNull(TxnCard.rebuild(listOf("AX-SBICRD-S", "Rs. 500 at Some Shop"), "AX-SBICRD-S", day))
+        // The row those versions already stored now reads as an offer, so it drops out of the totals.
+        val stored = "Rs.12345 spent on your SBI Credit Card at AX-SBICRD-P on 09/11/26. Trxn."
+        assertEquals(ReadResult.Promo, SmsReader.read("NT-SBICRD-T", stored, profile))
+        // A real card rebuilt the same way is untouched.
+        assertTrue(SmsReader.read("NT-SBICRD-T", "Rs.1455.14 spent on your SBI Credit Card at SOMEFOODLIMITED on 08/11/26. Trxn.", profile) is ReadResult.Parsed)
+    }
+
     /** Truecaller shows direction only by the amount's colour. */
     @Test fun amountColourDecidesDirection() {
         assertEquals(Direction.DEBIT, TxnCard.directionOf(0xFFF26B3A.toInt()))  // orange, as on the phone

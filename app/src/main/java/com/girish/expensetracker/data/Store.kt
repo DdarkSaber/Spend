@@ -143,6 +143,24 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, STOR
         return db.insertWithOnConflict("notif_seen", null, v, SQLiteDatabase.CONFLICT_IGNORE) != -1L
     }
 
+    /** True when [hash] was recorded by [firstSeen] in the last 7 days. */
+    fun seen(hash: String): Boolean =
+        readableDatabase.rawQuery("SELECT 1 FROM notif_seen WHERE hash = ? LIMIT 1", arrayOf(hash)).use { it.moveToFirst() }
+
+    /**
+     * Removes notification copies of [body] stored within 10 minutes of [at]: the SMS itself was just turned away
+     * (not a bank sender, or an offer), so its notification must not count either. Returns how many were removed.
+     */
+    fun dropNotifCopies(body: String, at: Long): Int {
+        val norm = com.girish.expensetracker.core.SameText.normalize(body)
+        val ids = readableDatabase.rawQuery(
+            "SELECT id, body FROM sms WHERE received_at > ? AND received_at < ? AND channel LIKE 'notif:%'",
+            arrayOf((at - 600_000L).toString(), (at + 600_000L).toString()),
+        ).use { c -> buildList { while (c.moveToNext()) if (com.girish.expensetracker.core.SameText.normalize(c.getString(1)) == norm) add(c.getLong(0)) } }
+        ids.forEach { writableDatabase.delete("sms", "id = ?", arrayOf(it.toString())) }
+        return ids.size
+    }
+
     /** True when an alert with the same normalized text came on another channel within 24 hours. */
     fun sameTextElsewhere(body: String, channel: String, at: Long): Boolean {
         val norm = com.girish.expensetracker.core.SameText.normalize(body)

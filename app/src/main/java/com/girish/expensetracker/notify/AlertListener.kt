@@ -54,14 +54,18 @@ class AlertListener : NotificationListenerService() {
                 val extrasDump = (hint + drawn).joinToString(" | ") + (amountColor?.let { " | color=#%08X".format(it) } ?: "")
                 var stored = emptyList<Long>()
                 var passed = false
+                var refused = false
                 for (c in candidates) {
-                    val o = repo.ingestNotification(pkg, titleHint, c, at)
+                    val o = repo.ingestNotification(pkg, titleHint, c, at, from = title)
                     Audit.notification(this, pkg, title, text, big, o, extrasDump)
                     o.smsId?.let { stored = stored + it }
                     if (o.decision in setOf("stored", "dup-text", "dup-same-channel")) passed = true
+                    // An offer, an OTP, a phone-number sender or a turned-away SMS is never given a second reading.
+                    if (o.gate in setOf("offer", "otp", "phone-sender", "sms-rejected")) refused = true
                 }
                 // Nothing read as an alert: try it as a transaction card (merchant + amount + "Credit Card xx4415").
-                if (!passed) {
+                // Only Truecaller draws such cards; any other app's text was already read as it stands.
+                if (!passed && !refused && pkg == TRUECALLER) {
                     val day = java.time.Instant.ofEpochMilli(at).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
                     com.girish.expensetracker.core.TxnCard.rebuild(listOfNotNull(title, text, big) + lines + messages + drawn, titleHint, day, amountColor)?.let { rebuilt ->
                         val o = repo.ingestNotification(pkg, titleHint, rebuilt, at)

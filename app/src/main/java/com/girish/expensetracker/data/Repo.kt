@@ -380,13 +380,19 @@ class Repo(val store: Store) {
      * One notification text from [pkg]: bank from the text (the title is a hint), gate, re-post and same-text checks,
      * then stored like an SMS with channel "notif:{pkg}".
      */
-    fun ingestNotification(pkg: String, title: String?, text: String, at: Long): NotifOutcome {
+    fun ingestNotification(pkg: String, title: String?, text: String, at: Long, from: String? = null): NotifOutcome {
         val channel = "notif:$pkg"
-        val hash = java.security.MessageDigest.getInstance("SHA-256").digest((pkg + "\u0000" + text).toByteArray())
-            .joinToString("") { "%02x".format(it) }
-        if (!store.firstSeen(hash, at)) return NotifOutcome(text, null, "-", "repost", null, null)
-        val sender = com.girish.expensetracker.core.BankFromText.sender(text, title)
-            ?: return NotifOutcome(text, null, "-", "no-bank", null, null)
+        if (!store.firstSeen(sha(pkg + "\u0000" + text), at)) return NotifOutcome(text, null, "-", "repost", null, null)
+        // The notification of an SMS must pass the checks the SMS itself passes. A conversation under a phone number
+        // is a person or an unregistered sender (banks never alert from one), and a text the SMS reader already
+        // turned away stays turned away.
+        val name = from?.trim().orEmpty()
+        if (phoneNumber.matches(name)) return NotifOutcome(text, null, "phone-sender", "gate", null, null)
+        if (store.seen(rejectedKey(text))) return NotifOutcome(text, null, "sms-rejected", "gate", null, null)
+        // Titled with a sender header ("AX-SBICRD-P"): that is the real sender, promo suffix and all.
+        val sender = if (SmsReader.isSenderHeader(name)) name.uppercase().takeIf { SmsReader.bankOf(it) != null }
+            else com.girish.expensetracker.core.BankFromText.sender(text, title)
+        sender ?: return NotifOutcome(text, null, "-", "no-bank", null, null)
         val profile = profile()
         val learned = store.learned()
         val gate = com.girish.expensetracker.core.NotifGate.check(sender, text, profile, learned)
@@ -418,10 +424,28 @@ class Repo(val store: Store) {
         drop.forEach { saveSourceMeta((metas[it] ?: com.girish.expensetracker.core.SourceMeta(it)).copy(status = com.girish.expensetracker.core.SourceStatus.IGNORED)) }
     }
 
+    private val phoneNumber = Regex("^\\+?[\\d\\s()\\-]{7,}$")
+
+    private fun sha(text: String) =
+        java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
+
+    // Only a hash is kept (for 7 days), never the text: most turned-away SMS are personal.
+    private fun rejectedKey(body: String) = "sms:" + sha(com.girish.expensetracker.core.SameText.normalize(body))
+
+    /** Bumped when a notification copy is removed because its SMS was turned away, so the totals get refreshed. */
+    @Volatile var removedCopies = 0
+        private set
+
     /** Like [ingest], returning the stored SMS's id (for the quick-tag notification). */
     fun ingestId(sender: String, body: String, receivedAt: Long): Long? {
         return when (SmsReader.read(sender, body, profile(), store.learned())) {
-            ReadResult.NotBank, ReadResult.Promo -> null
+            ReadResult.NotBank, ReadResult.Promo -> {
+                // Its notification (Google Messages, Truecaller) must not get in by the other door: remember the text
+                // as turned away, and remove a copy that got stored before this SMS was read.
+                store.firstSeen(rejectedKey(body), receivedAt)
+                if (store.dropNotifCopies(body, receivedAt) > 0) removedCopies++
+                null
+            }
             // Informational bank SMS are kept too: a future layout may turn them into transactions.
             else -> store.insertSmsId(sender, body, receivedAt)
         }

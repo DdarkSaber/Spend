@@ -15,7 +15,11 @@ object TxnCard {
     private val amount = Regex("(?:₹|Rs\\.?|INR)\\s*([\\d,]+(?:\\.\\d{1,2})?)", I)
     private val card = Regex("(?:Credit\\s*Card|Card)\\s*(?:no\\.?\\s*)?(?:ending\\s*(?:with\\s*)?)?[xX*•.\\s]*(\\d{4})\\b", I)
     private val moneyIn = Regex("credited|received|refund|revers|cashback|payment|paid\\s+to\\s+(?:your\\s+)?card|declined|failed|\\+\\s*(?:₹|Rs|INR)", I)
-    private val sentence = Regex("\\b(spent|debited|charged|purchase|txn|transaction)\\b", I)
+    private val sentence = Regex("\\b(spent|debited|charged|purchase|txn|transactions?)\\b", I)
+    // An offer quotes an amount too ("convert transactions of Rs. X into Flexipay EMIs. Book Now"): never a spend.
+    private val offer = Regex("\\boffers?\\b|\\bEMIs?\\b|flexipay|\\bconvert|book now|valid (?:till|until|upto)|T&C|\\bloan\\b|pre-?approved|https?://", I)
+    // A sender header ("AX-SBICRD-P") is the title of an SMS notification, never a merchant.
+    private val senderHeader = Regex("^[A-Z]{2}-[A-Z0-9]{6}(?:-[STGP])?$", I)
     private val ddMMyy = DateTimeFormatter.ofPattern("dd/MM/yy")
 
     /** Red or orange -> money out, green -> money in, anything else (grey, white, unknown) -> null. */
@@ -49,7 +53,8 @@ object TxnCard {
         // Truecaller shows direction only by colour: red/orange = money out, green = money in.
         if (amountColor != null && directionOf(amountColor) == Direction.CREDIT) return null
         val all = parts.joinToString(" \n ")
-        if (moneyIn.containsMatchIn(all) || sentence.containsMatchIn(all)) return null
+        if (moneyIn.containsMatchIn(all) || sentence.containsMatchIn(all) || offer.containsMatchIn(all)) return null
+        if (parts.any { senderHeader.matches(it.trim()) }) return null
         val amt = amount.findAll(all).map { it.groupValues[1] }.distinct().toList().singleOrNull() ?: return null
         val digits = card.findAll(all).map { it.groupValues[1] }.distinct().toList()
         if (digits.size > 1) return null
