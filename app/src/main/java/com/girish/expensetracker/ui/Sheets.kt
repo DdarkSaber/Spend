@@ -118,6 +118,7 @@ internal fun RowSheet(
     tag: String? = null,
     knownTags: List<String> = emptyList(),
     onTag: (String) -> Unit = {},
+    onReport: ((String) -> Unit)? = null,
 ) {
     val t = LocalTones.current
     val x = row.txn
@@ -192,6 +193,20 @@ internal fun RowSheet(
             row.rawBody?.let { body ->
                 item { Gap(4.dp); Text("Original SMS", style = MaterialTheme.typography.titleSmall, color = t.ink) }
                 item { Text(body, style = MaterialTheme.typography.bodySmall, color = t.ink2) }
+            }
+            onReport?.let { report ->
+                item {
+                    Gap(4.dp)
+                    Text("Something wrong with this one?", style = MaterialTheme.typography.titleSmall, color = t.ink)
+                    Text("Tap what's wrong. It is saved for the next debug bundle; nothing changes in your totals.", style = MaterialTheme.typography.bodySmall, color = t.ink2)
+                }
+                item {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        com.girish.expensetracker.data.Issues.REASONS.forEach { r ->
+                            FilterChip(false, { report(r) }, { Text(r) }, colors = chipColors(), border = chipBorder(false))
+                        }
+                    }
+                }
             }
             row.manualId?.let { id ->
                 // Destructive action kept apart from everything else on the sheet.

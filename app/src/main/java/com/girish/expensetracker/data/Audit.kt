@@ -10,6 +10,8 @@ import java.time.LocalDate
  * Temporary audit log for the validation week: every allowlisted notification and every SMS, with what the app did
  * with it, one JSON object per line in getExternalFilesDir("audit")/alerts-YYYY-MM-DD.jsonl. Kept to 30 days and
  * 5 MB in all, switchable in More. Never leaves the phone unless the owner shares the debug bundle.
+ * Only bank alerts are kept as text: anything that names no bank (personal SMS, other apps' chats, one-time codes) is
+ * logged as lengths only, see [redact].
  * Remove after validation.
  */
 object Audit {
@@ -34,7 +36,7 @@ object Audit {
         runCatching {
             val dir = dir(context) ?: return
             entry.put("logged", System.currentTimeMillis())
-            File(dir, "alerts-${LocalDate.now()}.jsonl").appendText(entry.toString() + "\n")
+            File(dir, "alerts-${LocalDate.now()}.jsonl").appendText(redact(entry).toString() + "\n")
             rotate(context)
         }
     }
@@ -46,6 +48,49 @@ object Audit {
         // Oldest days go first until the whole log fits; today's file is always kept.
         while (all.size > 1 && all.sumOf { it.length() } > MAX_BYTES) all.removeAt(0).delete()
     }
+
+    private val textKeys = listOf("title", "text", "bigText", "candidate", "extras", "droppedText")
+    private val otp = Regex("\\bOTP\\b|one[- ]time|verification code|\\bcode\\b|\\bpassword\\b|\\bPIN\\b|\\bCVV\\b", RegexOption.IGNORE_CASE)
+    private val digitRun = Regex("\\d{4,8}")
+    private val moneyLike = Regex(
+        "(?:₹|Rs\\.?|INR)\\s*[\\d,]+.*?(?:debited|credited|spent|paid|sent|received|withdrawn|charged|deducted|refund)" +
+            "|(?:debited|credited|spent|paid|sent|received|withdrawn|charged|deducted|refund).*?(?:₹|Rs\\.?|INR)\\s*[\\d,]+",
+        setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL),
+    )
+
+    /**
+     * What may be written to the log (and, for lines logged by older versions, to the debug bundle).
+     *  - An entry that names no bank keeps no text: each text field becomes its length, a personal sender becomes
+     *    "(masked)" (a registered sender header such as "VM-SWIGGY-S" is kept), and "moneyLike" says whether the text
+     *    read like a transaction, so a bank sender the app doesn't know yet still shows up.
+     *  - One-time codes: in any text that mentions a code, runs of 4 to 8 digits are replaced by "#".
+     */
+    fun redact(entry: JSONObject): JSONObject {
+        if (entry.optBoolean("masked")) return entry
+        val kind = if (entry.isNull("kind")) "" else entry.optString("kind")
+        if (kind != "sms" && kind != "notif") return entry
+        val texts = textKeys.filter { !entry.isNull(it) }.associateWith { entry.optString(it) }
+        val sender = if (entry.isNull("sender")) "" else entry.optString("sender")
+        val banked = when (kind) {
+            "sms" -> com.girish.expensetracker.core.SmsReader.bankOf(sender) != null
+            else -> !entry.isNull("bankGuess") || texts.values.any {
+                com.girish.expensetracker.core.BankFromText.code(it) != null || com.girish.expensetracker.core.SmsReader.bankOf(it) != null
+            }
+        }
+        if (!banked) {
+            entry.put("moneyLike", texts.values.any { moneyLike.containsMatchIn(it) })
+            texts.forEach { (k, v) -> entry.remove(k); entry.put(k + "Len", v.length) }
+            if (kind == "sms" && !com.girish.expensetracker.core.SmsReader.isSenderHeader(sender)) entry.put("sender", "(masked)")
+            entry.put("masked", true)
+        } else if (texts.values.any { otp.containsMatchIn(it) }) {
+            texts.forEach { (k, v) -> entry.put(k, digitRun.replace(v) { "#".repeat(it.value.length) }) }
+        }
+        return entry
+    }
+
+    /** One stored log line, redacted again by today's rules (lines written by older versions held everything). */
+    fun redactLine(line: String): String =
+        runCatching { redact(JSONObject(line)).toString() }.getOrDefault("{\"kind\":\"unreadable\",\"masked\":true}")
 
     fun result(r: ReadResult?): JSONObject = JSONObject().apply {
         when (r) {

@@ -49,6 +49,12 @@ internal fun SheetHost(ctl: AppController, snap: Snapshot, pickers: Pickers) {
                 onShop = if (com.girish.expensetracker.core.Shops.isShopPayment(row.txn)) ({ ctl.sheet = null; ctl.page = Page.Shop(com.girish.expensetracker.core.Shops.keyOf(snap.txns, row.txn.parsed.counterparty!!)) }) else null,
                 tag = snap.tagOf(row), knownTags = (snap.tags.values + snap.trips.map { it.name }).distinct().sorted(),
                 onTag = { tag -> ctl.act(closeSheet = false) { setTag(row, tag); if (tag.isBlank()) "Tag removed" else "Tagged “${tag.trim()}”" } },
+                onReport = { reason ->
+                    ctl.act {
+                        if (com.girish.expensetracker.data.Issues.report(ctl.context, row, reason)) "Reported: $reason. It goes with the next debug bundle"
+                        else "Couldn't save the report"
+                    }
+                },
             )
         }
 
