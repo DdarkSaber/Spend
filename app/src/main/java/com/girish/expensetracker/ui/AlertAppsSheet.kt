@@ -61,6 +61,27 @@ internal fun AlertAppsSheet(apps: List<Repo.AlertApp>, accessOn: Boolean, onDism
                 "Notification access", if (accessOn) "On" else "Off · alerts from these apps are missed",
                 trailing = { TextButton(onClick = { openNotificationAccess(context) }) { Text(if (accessOn) "Settings" else "Turn on", color = t.accent) } },
             )
+            val hiddenAt = remember { runCatching { (context.applicationContext as com.girish.expensetracker.SpendApp).repo.store.setting(com.girish.expensetracker.data.KEY_SENSITIVE_HIDDEN_AT)?.toLongOrNull() }.getOrNull() }
+            val granted = remember {
+                runCatching {
+                    context.checkSelfPermission("android.permission.RECEIVE_SENSITIVE_NOTIFICATIONS") == android.content.pm.PackageManager.PERMISSION_GRANTED ||
+                        context.getSystemService(android.app.AppOpsManager::class.java)
+                            .unsafeCheckOpNoThrow("android:receive_sensitive_notifications", android.os.Process.myUid(), context.packageName) == android.app.AppOpsManager.MODE_ALLOWED
+                }.getOrDefault(false)
+            }
+            val hiddenDay = hiddenAt?.let { java.time.Instant.ofEpochMilli(it).atZone(java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ofPattern("d MMM, HH:mm")) }
+            ListRow(
+                "Sensitive alerts",
+                when {
+                    hiddenDay == null -> if (granted) "Allowed" else "No alert hidden by Android so far"
+                    granted -> "Allowed · last hidden $hiddenDay (should stop now)"
+                    else -> "Blocked · Android hid an alert's text on $hiddenDay"
+                },
+            )
+            if (!granted) androidx.compose.foundation.text.selection.SelectionContainer {
+                Text("Android hides some bank alerts (often Gmail) from other apps. To allow Spend, run once over wireless debugging:\ncmd appops set --user 0 com.girish.expensetracker RECEIVE_SENSITIVE_NOTIFICATIONS allow",
+                    style = MaterialTheme.typography.bodySmall, color = t.ink2)
+            }
             Hairline()
             list.forEachIndexed { i, a ->
                 ListRow(a.label, a.pkg, trailing = { Switch(a.enabled, { on -> list[i] = a.copy(enabled = on) }, colors = switchColors) })

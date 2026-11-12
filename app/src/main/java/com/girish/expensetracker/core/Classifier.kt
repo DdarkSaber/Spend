@@ -6,7 +6,7 @@ import java.time.LocalDateTime
 object Classifier {
 
     private val cardBillPayees = listOf("SBI CARDS", "SBICARD", "CRED", "HDFC CREDIT CARD", "ICICI CREDIT CARD", "CREDIT CARD")
-    private val investmentPayees = listOf("GROWW", "GR0WW", "INDIAN CLEARING", "ZERODHA", "UPSTOX", "BSE", "NSE CLEARING", "MUTUAL FUND", "ICCL")
+    private val investmentPayees = listOf("GROWW", "GR0WW", "INDIAN CLEARING", "INDIANCLEARING", "ZERODHA", "UPSTOX", "BSE", "NSE CLEARING", "MUTUAL FUND", "ICCL")
     private val refundWords = listOf("REFUND", "PLAYSTORE", "GOOGLE", "AMAZON", "FLIPKART", "PAYTM", "RAZORPAY", "BILLDESK")
 
     fun classify(p: ParsedSms, receivedAt: LocalDateTime, profile: Profile, payeeRules: PayeeRules = PayeeRules.EMPTY): Txn {

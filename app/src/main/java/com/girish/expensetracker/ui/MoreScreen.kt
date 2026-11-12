@@ -84,6 +84,8 @@ internal class MoreActions(
     val alertApps: () -> Unit = {},
     val debugBundle: () -> Unit = {},
     val matchContacts: () -> Unit = {},
+    val hidden: () -> Unit = {},
+    val hiddenCount: Int = 0,
 )
 
 /** Switches and their current values. */
@@ -168,6 +170,10 @@ internal fun MoreScreen(snap: Snapshot, setup: Setup, isNew: (Row) -> Boolean, o
                 Toggle(Icons.Outlined.ReceiptLong, "Audit log", "Records every alert for the validation week", settings.auditOn, settings.onAudit)
                 Hairline()
                 Action(Icons.Outlined.BugReport, "Export debug bundle", "Audit log + database, to share yourself", actions.debugBundle)
+                if (actions.hiddenCount > 0) {
+                    Hairline()
+                    Action(Icons.Outlined.BugReport, "Hidden payments", "${actions.hiddenCount} marked not a spend · tap to restore", actions.hidden)
+                }
             }
         }
 

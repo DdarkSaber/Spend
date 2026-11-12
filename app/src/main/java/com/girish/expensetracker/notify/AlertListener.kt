@@ -50,6 +50,10 @@ class AlertListener : NotificationListenerService() {
                 // Each part is read on its own; Gmail's big text is the subject plus snippet.
                 val candidates = (if (pkg == GMAIL) listOf(big ?: text) else listOf(big ?: text) + lines + messages)
                     .filterNotNull().map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+                // Android 15+ hands other apps a placeholder for alerts it thinks hold a code; remember when, for Alert apps.
+                if (candidates.any { it.contains("Sensitive notification content hidden", true) }) {
+                    runCatching { repo.store.setSetting(com.girish.expensetracker.data.KEY_SENSITIVE_HIDDEN_AT, at.toString()) }
+                }
                 val titleHint = (listOfNotNull(title) + hint).joinToString(" · ").ifEmpty { null }
                 val extrasDump = (hint + drawn).joinToString(" | ") + (amountColor?.let { " | color=#%08X".format(it) } ?: "")
                 var stored = emptyList<Long>()

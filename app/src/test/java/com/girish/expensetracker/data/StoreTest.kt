@@ -120,4 +120,25 @@ class StoreTest {
         assertTrue(after.iOwe.isEmpty())
         assertEquals(30000L, com.girish.expensetracker.core.Ledger.monthAmount(after.rows.single().txn))
     }
+
+    @Test fun notASpendHidesAndRestoresAndMisreadCardsAreRemoved() {
+        context.deleteDatabase("spend.db")
+        val store = Store(context)
+        val repo = Repo(store)
+        val now = System.currentTimeMillis()
+        val real = store.insertSmsId("VM-HDFCBK-T", "Sent Rs.100.00 From HDFC Bank A/C *1234 To Some Shop On ${java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("dd/MM/yy"))} Ref 100000000001", now)!!
+        // What 1.2.3-1.2.7 stored from an offer shown by Google Messages, and a real Truecaller card.
+        store.insertSms("NT-SBICRD-T", "Rs.59 spent on your SBI Credit Card at GOOGLE PAY on 10/11/26. Trxn.", now - 1000, "notif:com.google.android.apps.messaging")
+        store.insertSms("NT-SBICRD-T", "Rs.75 spent on your SBI Credit Card at SOMEFOOD on 10/11/26. Trxn.", now - 2000, "notif:com.truecaller")
+        var s = repo.snapshot()
+        assertEquals(2, store.smsSince(0).size) // the misread card is gone, the Truecaller one stays
+        assertTrue(s.hidden.isEmpty())
+        repo.markNotSpend(real)
+        s = repo.snapshot()
+        assertEquals(listOf(real), s.hidden.map { it.id })
+        assertTrue(s.rows.none { it.smsId == real } && s.unparsed.none { it.id == real })
+        repo.restoreNotSpend(real)
+        assertTrue(repo.snapshot().hidden.isEmpty())
+        store.close()
+    }
 }

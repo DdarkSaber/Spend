@@ -294,6 +294,8 @@ private fun moreActions(ctl: AppController, s: Snapshot, pickers: Pickers, onBat
     importStatement = pickers.openCsv,
     importHistory = pickers.openArchive,
     matchContacts = pickers.matchContacts,
+    hidden = { ctl.sheet = Sheet.Hidden },
+    hiddenCount = s.hidden.size,
     sources = { ctl.page = Page.Sources },
     alertApps = { ctl.sheet = Sheet.AlertApps },
     debugBundle = {

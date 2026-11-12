@@ -115,6 +115,7 @@ internal fun RowSheet(
     onSplit: () -> Unit,
     onShop: (() -> Unit)? = null,
     onAssignCredit: (() -> Unit)? = null,
+    onNotSpend: (() -> Unit)? = null,
     tag: String? = null,
     knownTags: List<String> = emptyList(),
     onTag: (String) -> Unit = {},
@@ -160,6 +161,12 @@ internal fun RowSheet(
                         "Split with ${x.splitWith.joinToString { it.name }} · your share ${rupeesExact(x.ownPaise)}",
                         style = MaterialTheme.typography.bodyMedium, color = t.accent, modifier = Modifier.padding(top = 4.dp),
                     )
+                }
+            }
+            onNotSpend?.let { hide ->
+                item {
+                    SecondaryButton("Not a spend (offer or spam)", hide, Modifier.fillMaxWidth())
+                    Text("Removes it from every total. Undo in More → Hidden payments.", style = MaterialTheme.typography.bodySmall, color = t.ink2, modifier = Modifier.padding(top = 4.dp))
                 }
             }
             if (canSplit) item {

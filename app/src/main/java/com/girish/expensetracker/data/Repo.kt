@@ -90,6 +90,8 @@ data class Snapshot(
     val debts: List<Debt> = emptyList(),
     /** Whom the owner still owes, from "They paid for me" (netted against what they owe the owner). */
     val iOwe: List<Debt> = emptyList(),
+    /** Alerts the owner marked "Not a spend": never counted, restorable from More. */
+    val hidden: List<UnparsedSms> = emptyList(),
     /** Foreign-currency charges seen in the last week (they can't be counted in rupees, so they are flagged). */
     val foreign: List<Unusual> = emptyList(),
     /** Row key -> the owner's tag ("Goa trip", "office"). */
@@ -262,6 +264,9 @@ data class Owner(val state: String, val displayName: String, val salaryDay: Int,
 private const val KEY_SETUP = "setup"
 private const val KEY_CONTACT_MATCHES = "contact_matches"
 private const val KEY_SETTLED_OWED = "settled_owed"
+private const val KEY_NOT_SPEND = "not_spend"
+private const val KEY_CLEANED_128 = "cleaned_128"
+const val KEY_SENSITIVE_HIDDEN_AT = "sensitive_hidden_at"
 private const val KEY_CREDIT_PERSON = "credit_person"
 private const val KEY_PAYEE_REVIEW_DISMISSED = "payee_review_dismissed"
 private const val KEY_NAME = "display_name"
@@ -549,9 +554,14 @@ class Repo(val store: Store) {
 
         // Level 0: the same alert stored twice (live + import with slightly different stamps, or an SMS and its
         // notification copy) is read once.
+        removeMisreadCards()
+        val notSpend = lines(KEY_NOT_SPEND).mapNotNull { it.toLongOrNull() }.toSet()
+        val hidden = mutableListOf<UnparsedSms>()
         val alerts = com.girish.expensetracker.core.SameText.keep(store.smsSince(sinceMillis), { it.sender }, { it.body }, { it.receivedAt }, { it.channel })
         for (sms in alerts) {
             val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(sms.receivedAt), zone)
+            // "Not a spend": the owner said this alert moved no money (an offer or scam read as a payment).
+            if (sms.id in notSpend) { hidden += UnparsedSms(sms.id, sms.sender, sms.body, at); continue }
             // Reading an SMS is the slow part, and its result only changes when the owner's cards or taught layouts do.
             val read = readings[sms.id] ?: com.girish.expensetracker.core.Reading(
                 SmsReader.read(sms.sender, sms.body, profile, learned),
@@ -649,6 +659,7 @@ class Repo(val store: Store) {
         return Snapshot(
             rows = deduped,
             unparsed = unparsed.reversed(),
+            hidden = hidden.reversed(),
             newSources = newSources.map { (s, body) -> NewSource(s, body) },
             today = today,
             owner = owner(),
@@ -670,6 +681,24 @@ class Repo(val store: Store) {
             ignored = (ignored.mapNotNull(com.girish.expensetracker.core.SourceMeta::parseKey) +
                 metas.values.filter { it.status == com.girish.expensetracker.core.SourceStatus.IGNORED }.map { it.source }).toSet(),
         )
+    }
+
+    /** "Not a spend": this alert is never counted again (undo from More -> Hidden payments). */
+    fun markNotSpend(smsId: Long) = store.setSetting(KEY_NOT_SPEND, (lines(KEY_NOT_SPEND) + smsId.toString()).joinToString("\n"))
+
+    fun restoreNotSpend(smsId: Long) = store.setSetting(KEY_NOT_SPEND, (lines(KEY_NOT_SPEND) - smsId.toString()).joinToString("\n"))
+
+    /**
+     * Once: 1.2.3-1.2.7 rebuilt offers shown by other apps (Google Messages) as SBI Card spends. Those rows hold the
+     * rebuilt sentence, not a bank's text, and only Truecaller draws transaction cards, so they are removed.
+     */
+    private fun removeMisreadCards() {
+        if (store.setting(KEY_CLEANED_128) == "1") return
+        store.writableDatabase.execSQL(
+            "DELETE FROM sms WHERE channel LIKE 'notif:%' AND channel != 'notif:com.truecaller' " +
+                "AND body LIKE 'Rs.% spent on your % Credit Card % on __/__/__.%' AND length(body) < 140 AND body NOT LIKE '%not done by you%'"
+        )
+        store.setSetting(KEY_CLEANED_128, "1")
     }
 
     /** Payee label -> the phone contact's saved name (matched on the device; only matches are kept). */

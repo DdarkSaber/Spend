@@ -44,6 +44,7 @@ internal fun SheetHost(ctl: AppController, snap: Snapshot, pickers: Pickers) {
                 },
                 onDeleteCash = { id -> ctl.act { store.deleteManual(id); "Cash entry deleted" } },
                 onSplit = { ctl.sheet = Sheet.Split(row) },
+                onNotSpend = row.smsId?.let { id -> { ctl.sheet = null; ctl.act { markNotSpend(id); "Hidden. Undo in More → Hidden payments" } } },
                 onAssignCredit = if (row.smsId != null && row.txn.parsed.direction == com.girish.expensetracker.core.Direction.CREDIT &&
                     row.txn.kind in setOf(com.girish.expensetracker.core.Kind.PERSON_CREDIT, com.girish.expensetracker.core.Kind.REPAID, com.girish.expensetracker.core.Kind.INCOME)) ({ ctl.sheet = Sheet.AssignCredit(row) }) else null,
                 onShop = if (com.girish.expensetracker.core.Shops.isShopPayment(row.txn)) ({ ctl.sheet = null; ctl.page = Page.Shop(com.girish.expensetracker.core.Shops.keyOf(snap.txns, row.txn.parsed.counterparty!!)) }) else null,
@@ -69,6 +70,8 @@ internal fun SheetHost(ctl: AppController, snap: Snapshot, pickers: Pickers) {
             val id = sheet.row.smsId ?: return@AssignCreditSheet
             ctl.act { assignCredit(id, p?.labels?.firstOrNull()); if (p == null) "Back to the bank's payer name" else "Put under ${p.name}" }
         }
+
+        Sheet.Hidden -> HiddenSheet(snap.hidden, onDismiss = close) { id -> ctl.act { restoreNotSpend(id); "Restored" } }
 
         Sheet.PayeeReview -> PayeeReviewSheet(snap.payeeReview, onDismiss = close) { shops, persons ->
             ctl.act { answerPayees(shops, persons); "Saved: ${count(shops.size, "shop")}, ${count(persons.size, "person")}" }

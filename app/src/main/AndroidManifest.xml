@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- No INTERNET permission on purpose: nothing ever leaves the phone. -->
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
@@ -13,6 +14,9 @@
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <!-- Optional, asked from More → Match with contacts: names and numbers are read on the phone; only matches are kept. -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- Android 15+ hides some alerts ("Sensitive notification content hidden") from apps without this. It can only be
+         granted by the owner over ADB (appops set ... RECEIVE_SENSITIVE_NOTIFICATIONS allow; the command is shown in Alert apps). -->
+    <uses-permission android:name="android.permission.RECEIVE_SENSITIVE_NOTIFICATIONS" tools:ignore="ProtectedPermissions" />
 
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
 

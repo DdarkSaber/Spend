@@ -14,7 +14,7 @@ data class Reading(val result: ReadResult, val statement: CardStatement?, val li
 object ParseCache {
 
     /** Bump whenever SmsReader, Generic, Teach, CardFacts or UnusualSpend.foreignCharge read any text differently. */
-    const val PARSER_VERSION = 2
+    const val PARSER_VERSION = 3
 
     /** Stable across runs (no enum or object hash codes), so a restart keeps the cache. */
     fun version(profile: Profile, learned: List<LearnedLayout>, zoneId: String): Long {

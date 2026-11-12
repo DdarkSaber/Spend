@@ -112,6 +112,8 @@ object SmsReader {
         RegexOption.IGNORE_CASE,
     )
 
+    private val emailSentence = Regex("Rs\\.?\\s?[\\d,.]+ spent on your SBI Credit Card ending", RegexOption.IGNORE_CASE)
+
     fun read(sender: String, body: String, profile: Profile, learned: List<LearnedLayout> = emptyList()): ReadResult {
         val header = dltHeader.matchEntire(sender.trim()) ?: return ReadResult.NotBank
         val entity = header.groupValues[1].uppercase()
@@ -119,7 +121,9 @@ object SmsReader {
         val bank = bankCodes[entity] ?: return ReadResult.NotBank
         if (type == "P") return ReadResult.Promo
 
-        val text = body.replace(Regex("\\s+"), " ").trim()
+        var text = body.replace(Regex("\\s+"), " ").trim()
+        // A bank email read from its notification starts with the subject and a greeting: read from the sentence itself.
+        if (sender.startsWith("NT-")) emailSentence.find(text)?.let { text = text.substring(it.range.first) }
         val lower = text.lowercase()
         if (informationalPhrases.any { it in lower }) return ReadResult.Informational
 
@@ -175,6 +179,16 @@ internal object Layouts {
         // PAYMENT ALERT! INR 9000.00 deducted from HDFC Bank A/C No 1234 towards Indian Clearing Corporation Lt UMRN: ...
         Layout(Regex("^PAYMENT ALERT! INR $AMT deducted from HDFC Bank A/C No (\\d{4}) towards (.+?) UMRN", I)) { m ->
             ParsedSms(Template.HDFC_ACH_ALERT, Direction.DEBIT, paise(m[1]), acct("HDFC", m[2]), m[3].trim(), null, null, m[3].trim())
+        },
+        // INR 5000.00 debited to HDFC Bank A/C No XXXXXXXXXX1234 towards Indian Clearing Corporation Ltd / 0075433023 with UMRN ...
+        // (the 2024 wording of PAYMENT ALERT: the same debit as its UPDATE SMS)
+        Layout(Regex("^INR $AMT debited to HDFC Bank A/C No X*(\\d{4}) towards (.+?)(?: / \\d+)? with UMRN", I)) { m ->
+            ParsedSms(Template.HDFC_ACH_ALERT, Direction.DEBIT, paise(m[1]), acct("HDFC", m[2]), m[3].trim(), null, null, m[3].trim())
+        },
+        // HDFC email: Rs.1.00 is debited from your account ending 1234 towards VPA ****@slc (Groww) on 12-11-26. UPI transaction reference no.: 100000000001
+        // (same reference as the SMS, so the two are read once)
+        Layout(Regex("Rs\\.?\\s?$AMT is debited from your account ending (\\d{4}) towards VPA \\S+ \\((.+?)\\) on (\\d{2}-\\d{2}-\\d{2})\\. UPI transaction reference no\\.?:? ?(\\d+)", I)) { m ->
+            ParsedSms(Template.HDFC_UPI_SENT, Direction.DEBIT, paise(m[1]), acct("HDFC", m[2]), m[3], Dates.parse(m[4]), m[5], null)
         },
         // Spent Rs.585 On HDFC Bank Card 4321 At ..PVR LIMITED_ On 2026-08-19:00:16:16.
         Layout(Regex("^Spent Rs\\.?$AMT On HDFC Bank Card (\\d{4}) At (.+?) On (\\d{4}-\\d{2}-\\d{2})", I)) { m ->
