@@ -115,6 +115,13 @@ fun AppRoot(
             ctl.reload()
         }
     }
+    // Every open: read any bank SMS the receiver missed while the app was stopped.
+    LaunchedEffect(tick) {
+        if (setup.sms && withContext(Dispatchers.IO) { !repo.needsImport() }) {
+            val r = withContext(Dispatchers.IO) { Importer.catchUp(context) }
+            if (r.stored > 0) ctl.reload()
+        }
+    }
     LaunchedEffect(tick) {
         seenBefore = Seen.get(context)
         Seen.markNow(context)
@@ -164,6 +171,8 @@ fun AppRoot(
                         onHabits = { ctl.page = Page.Habits },
                         alertAccessOff = alertAccessOff,
                         onFixAlerts = { openNotificationAccess(context) },
+                        backupWarning = remember(s) { AutoBackup.warning(context) },
+                        onBackup = { ctl.sheet = Sheet.AutoBackup },
                         onLoadDemo = if (BuildConfig.DEBUG) ({ ctl.act { "Loaded ${loadDemo()} demo bank SMS (debug build only)" } }) else null,
                     )
                     Tab.MONTH -> MonthScreen(

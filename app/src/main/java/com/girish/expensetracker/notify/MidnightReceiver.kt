@@ -16,6 +16,8 @@ class MidnightReceiver : BroadcastReceiver() {
         val pending = goAsync()
         thread(name = "midnight") {
             try {
+                // Bank SMS the receiver missed (the phone stopped it) are read now.
+                runCatching { com.girish.expensetracker.sms.Importer.catchUp(context) }
                 Notifier.refresh(context)
                 // Weekly encrypted backup to the owner's chosen file (e.g. Google Drive), riding on this same wake-up.
                 com.girish.expensetracker.data.AutoBackup.runIfDue(context, (context.applicationContext as com.girish.expensetracker.SpendApp).repo.store)

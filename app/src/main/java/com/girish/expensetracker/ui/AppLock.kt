@@ -65,6 +65,9 @@ internal class AppLock(private val activity: ComponentActivity) {
     /** With the lock on, the recent-apps preview doesn't show your spending either. */
     private fun hideFromRecents(on: Boolean) {
         if (Build.VERSION.SDK_INT >= 33) activity.setRecentsScreenshotEnabled(!on)
+        // With the lock on, screenshots and screen recording show nothing either.
+        if (on) activity.window.addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
+        else activity.window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE)
     }
 
     /** Never crash or strand the owner: if the system prompt can't open, the app opens unlocked. */

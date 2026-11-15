@@ -398,6 +398,11 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, STOR
             }
         }
 
+    /** When the newest SMS (not a notification copy) was received; null when none is stored. */
+    fun newestSmsMillis(): Long? = readableDatabase.rawQuery("SELECT MAX(received_at) FROM sms WHERE channel = 'sms'", null).use { c ->
+        if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else null
+    }
+
     fun setting(key: String): String? =
         readableDatabase.rawQuery("SELECT value FROM settings WHERE key = ?", arrayOf(key)).use { c -> if (c.moveToFirst()) c.getString(0) else null }
 

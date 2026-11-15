@@ -78,6 +78,7 @@ class AlertListener : NotificationListenerService() {
                     }
                 }
                 if (stored.isNotEmpty()) {
+                    runCatching { repo.store.setSetting(com.girish.expensetracker.data.KEY_LAST_ALERT + pkg, at.toString()) }
                     Notifier.refresh(this)
                     stored.forEach { runCatching { QuickTag.maybePost(this, it) } }
                 }
@@ -88,7 +89,19 @@ class AlertListener : NotificationListenerService() {
     /** On (re)connect, e.g. after an app update, read what is still in the shade; re-posts are dropped as usual. */
     override fun onListenerConnected() {
         super.onListenerConnected()
+        mark(com.girish.expensetracker.data.KEY_LISTENER_UP)
         runCatching { activeNotifications?.forEach { onNotificationPosted(it) } }
+    }
+
+    /** The system dropped the listener (memory, an update): ask to be bound again instead of going silent. */
+    override fun onListenerDisconnected() {
+        super.onListenerDisconnected()
+        mark(com.girish.expensetracker.data.KEY_LISTENER_DOWN)
+        runCatching { requestRebind(android.content.ComponentName(this, AlertListener::class.java)) }
+    }
+
+    private fun mark(key: String) {
+        runCatching { (applicationContext as SpendApp).repo.store.setSetting(key, System.currentTimeMillis().toString()) }
     }
 
     override fun onDestroy() {

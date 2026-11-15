@@ -63,6 +63,8 @@ internal fun DaysScreen(
     onHabits: () -> Unit = {},
     alertAccessOff: Boolean = false,
     onFixAlerts: () -> Unit = {},
+    backupWarning: String? = null,
+    onBackup: () -> Unit = {},
 ) {
     val t = LocalTones.current
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -105,6 +107,14 @@ internal fun DaysScreen(
                 Text("Bank alerts that come only through Truecaller, RCS or email are being missed.", style = MaterialTheme.typography.bodyMedium, color = t.ink2)
                 Gap(10.dp)
                 PrimaryButton("Turn on", onFixAlerts)
+            }
+        }
+        if (backupWarning != null) item {
+            Panel {
+                PanelHeader("Backup is out of date")
+                Text(backupWarning, style = MaterialTheme.typography.bodyMedium, color = t.ink2)
+                Gap(10.dp)
+                PrimaryButton("Open backup", onBackup)
             }
         }
         if (snap.unusual.isNotEmpty()) item { WorthALookPanel(snap.unusual) }

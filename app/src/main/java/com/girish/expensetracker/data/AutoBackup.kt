@@ -59,10 +59,36 @@ object AutoBackup {
         runIfDue(c, store)
     }
 
+    /** Copies kept on the phone (app storage, already encrypted) besides the owner's file. */
+    private const val KEEP = 3
+    private const val STALE_DAYS = 14L
+
+    /** The backup is on but the last good one is over two weeks old (or the last try failed): shown on Home. */
+    fun warning(c: Context): String? {
+        val s = state(c)
+        if (!s.on) return null
+        val ageDays = (System.currentTimeMillis() - s.lastMillis) / (24L * 60 * 60 * 1000)
+        return when {
+            s.lastMillis == 0L -> "No backup has been written yet"
+            ageDays >= STALE_DAYS -> "Last good backup was $ageDays days ago" + (s.lastError?.let { " · $it" } ?: "")
+            else -> null
+        }
+    }
+
     private fun write(c: Context, store: Store, uri: Uri, password: CharArray) {
+        // The whole backup is built first, so a failure part-way never truncates the last good file.
+        val bytes = java.io.ByteArrayOutputStream().also { Backup.write(store, password, it) }.toByteArray()
         // "wt": truncate, so the file always holds exactly the latest backup.
-        c.contentResolver.openOutputStream(uri, "wt")!!.use { Backup.write(store, password, it) }
+        c.contentResolver.openOutputStream(uri, "wt")!!.use { it.write(bytes) }
+        runCatching { keepLocal(c, bytes) }
         prefs(c).edit().putLong("last", System.currentTimeMillis()).remove("error").apply()
+    }
+
+    /** The last [KEEP] backups also stay in app storage, so one bad write to the shared file is never the only copy. */
+    private fun keepLocal(c: Context, bytes: ByteArray) {
+        val dir = java.io.File(c.filesDir, "backups").apply { mkdirs() }
+        java.io.File(dir, "spend-${System.currentTimeMillis()}.spendbak").writeBytes(bytes)
+        dir.listFiles { f -> f.name.endsWith(".spendbak") }?.sortedByDescending { it.name }?.drop(KEEP)?.forEach { it.delete() }
     }
 
     private fun key(): SecretKey {

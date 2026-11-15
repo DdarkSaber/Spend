@@ -82,9 +82,21 @@ internal fun AlertAppsSheet(apps: List<Repo.AlertApp>, accessOn: Boolean, onDism
                 Text("Android hides some bank alerts (often Gmail) from other apps. To allow Spend, run once over wireless debugging:\ncmd appops set --user 0 com.girish.expensetracker RECEIVE_SENSITIVE_NOTIFICATIONS allow",
                     style = MaterialTheme.typography.bodySmall, color = t.ink2)
             }
+            // Health: when the listener last connected or was dropped, and the last alert read from each app.
+            val store = remember { runCatching { (context.applicationContext as com.girish.expensetracker.SpendApp).repo.store }.getOrNull() }
+            fun at(key: String) = store?.let { s -> runCatching { s.setting(key)?.toLongOrNull() }.getOrNull() }
+            val fmt = remember { java.time.format.DateTimeFormatter.ofPattern("d MMM, HH:mm") }
+            fun day(ms: Long) = java.time.Instant.ofEpochMilli(ms).atZone(java.time.ZoneId.systemDefault()).format(fmt)
+            val up = remember { at(com.girish.expensetracker.data.KEY_LISTENER_UP) }
+            val down = remember { at(com.girish.expensetracker.data.KEY_LISTENER_DOWN) }
+            if (accessOn && (up != null || down != null)) ListRow(
+                "Listener",
+                if (down != null && (up == null || down > up)) "Dropped by Android on ${day(down)} · reopen Spend or toggle access" else "Connected since ${day(up!!)}",
+            )
             Hairline()
             list.forEachIndexed { i, a ->
-                ListRow(a.label, a.pkg, trailing = { Switch(a.enabled, { on -> list[i] = a.copy(enabled = on) }, colors = switchColors) })
+                val last = remember(a.pkg) { at(com.girish.expensetracker.data.KEY_LAST_ALERT + a.pkg) }
+                ListRow(a.label, last?.let { "Last alert read ${day(it)}" } ?: "No alert read yet", trailing = { Switch(a.enabled, { on -> list[i] = a.copy(enabled = on) }, colors = switchColors) })
             }
             if (!adding) TextButton(onClick = { adding = true }) { Text("Add app", color = t.accent) }
             else {

@@ -267,6 +267,11 @@ private const val KEY_SETTLED_OWED = "settled_owed"
 private const val KEY_NOT_SPEND = "not_spend"
 private const val KEY_CLEANED_128 = "cleaned_128"
 const val KEY_SENSITIVE_HIDDEN_AT = "sensitive_hidden_at"
+/** "last_alert:{package}" -> when a bank alert was last stored from that app (millis). */
+const val KEY_LAST_ALERT = "last_alert:"
+/** When the notification listener last connected / disconnected (millis), for the health line in Alert apps. */
+const val KEY_LISTENER_UP = "listener_up"
+const val KEY_LISTENER_DOWN = "listener_down"
 private const val KEY_CREDIT_PERSON = "credit_person"
 private const val KEY_PAYEE_REVIEW_DISMISSED = "payee_review_dismissed"
 private const val KEY_NAME = "display_name"
@@ -543,7 +548,7 @@ class Repo(val store: Store) {
         val metas = store.sourceMetas()
         // Each account or card's latest transaction day, before debit cards are moved under their accounts.
         val lastActivity = HashMap<Source, LocalDate>()
-        val parserVersion = com.girish.expensetracker.core.ParseCache.version(profile, learned, zone.id)
+        val parserVersion = com.girish.expensetracker.core.ParseCache.version(profile, learned, zone.id, com.girish.expensetracker.BuildConfig.VERSION_CODE)
         val readings = readings(parserVersion)
         val fresh = HashMap<Long, String>()
         val rows = mutableListOf<Row>()
