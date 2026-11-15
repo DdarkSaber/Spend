@@ -48,6 +48,31 @@ class V13FixesTest {
         assertEquals(0L, Ledger.monthAmount(s.txns[2]))
     }
 
+    @Test fun transferPairsAreReportedForReview() {
+        val sbi = Source("SBI", "9939", SourceType.ACCOUNT)
+        val out = Txn(ParsedSms(Template.SBI_UPI_DEBIT, Direction.DEBIT, 10_000_00, sbi, null, LocalDate.parse("2026-10-01"), "a", null),
+            Kind.SPEND, null, "Uncategorised", LocalDate.parse("2026-10-01").atTime(10, 0))
+        val `in` = Txn(ParsedSms(Template.HDFC_UPI_CREDIT, Direction.CREDIT, 10_000_00, acct, null, LocalDate.parse("2026-10-01"), "b", null),
+            Kind.INCOME, null, "Income", LocalDate.parse("2026-10-01").atTime(10, 5))
+        val pairs = mutableListOf<Pair<Int, Int>>()
+        val r = Transfers.pair(listOf(out, `in`), isOwn = { true }, onPair = { d, c -> pairs += d to c })
+        assertEquals(listOf(0 to 1), pairs)
+        assertTrue(r.all { it.kind == Kind.TRANSFER })
+        // Pinned by the owner ("Not a transfer"): never paired again.
+        assertTrue(Transfers.pair(listOf(out, `in`), isOwn = { true }, locked = { it == 0 }).none { it.kind == Kind.TRANSFER })
+    }
+
+    @Test fun shopOrPersonAsksOnlyAboutRecentRepeatPayees() {
+        val today = LocalDate.parse("2026-11-15")
+        val txns = listOf(
+            pay("2026-11-01", 120, "RANDOM STALL"), pay("2026-11-03", 80, "RANDOM STALL"), // asked
+            pay("2026-11-02", 500, "ONE OFF NAME"), // one payment: not asked
+            pay("2024-01-01", 90, "OLD PLACE"), pay("2024-01-05", 90, "OLD PLACE"), // over a year ago: not asked
+            pay("2026-10-01", 300, "A FRIEND"), got("2026-10-02", 300, "A FRIEND"), // money both ways: a person
+        )
+        assertEquals(listOf("RANDOM STALL"), PayeeReviews.of(txns, { false }, emptySet(), today).map { it.label })
+    }
+
     @Test fun bankNamesThatContainAnother() {
         assertEquals("CENTBK", BankFromText.code("Rs 500 debited from your Central Bank of India account"))
         assertEquals("BOIIND", BankFromText.code("Rs 500 debited from your Bank of India account"))

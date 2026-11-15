@@ -72,6 +72,12 @@ data class Row(
     val alsoVia: List<String> = emptyList(),
 )
 
+/** A debit and a credit the app paired as a transfer; [before] is the debit as it read before pairing. */
+data class TransferPair(val debit: Row, val credit: Row, val before: Txn) {
+    /** Only alerts can be pinned by hand (statement rows have no id to keep the choice on). */
+    val undoable: Boolean get() = debit.smsId != null || credit.smsId != null
+}
+
 data class UnparsedSms(val id: Long, val sender: String, val body: String, val receivedAt: LocalDateTime)
 data class NewSource(val source: Source, val example: String)
 
@@ -109,6 +115,8 @@ data class Snapshot(
     val contactNames: Map<String, String> = emptyMap(),
     /** Payees that are a person only by default, for the one-time "Shop or person?" review. */
     val payeeReview: List<com.girish.expensetracker.core.PayeeReview> = emptyList(),
+    /** Debits and credits the app paired as moves between the owner's own accounts, newest first (reviewable). */
+    val transferPairs: List<TransferPair> = emptyList(),
 ) {
     fun statusOf(s: Source): com.girish.expensetracker.core.SourceStatus =
         com.girish.expensetracker.core.SourceMeta.effective(sourceMeta[s], lastActivity[s], today)
@@ -265,6 +273,8 @@ private const val KEY_SETUP = "setup"
 private const val KEY_CONTACT_MATCHES = "contact_matches"
 private const val KEY_SETTLED_OWED = "settled_owed"
 private const val KEY_NOT_SPEND = "not_spend"
+/** Foreign charges the owner entered in rupees (their flag keys): no longer flagged. */
+private const val KEY_FX_DONE = "fx_done"
 private const val KEY_CLEANED_128 = "cleaned_128"
 const val KEY_SENSITIVE_HIDDEN_AT = "sensitive_hidden_at"
 /** "last_alert:{package}" -> when a bank alert was last stored from that app (millis). */
@@ -540,6 +550,7 @@ class Repo(val store: Store) {
         val creditPerson = creditPersons()
         val learned = store.learned()
         val foreign = mutableListOf<Unusual>()
+        val fxDone = lines(KEY_FX_DONE)
         val dismissedRent = lines(KEY_RENT_DISMISSED)
         val rentPayees = lines(KEY_RENT).mapNotNull { l -> l.split('|').takeIf { it.size == 2 }?.let { it[0] to (it[1].toLongOrNull() ?: 0L) } }
 
@@ -577,7 +588,7 @@ class Repo(val store: Store) {
             // Statement and limit SMS move no money but tell how each credit card stands.
             read.statement?.let { statements += it }
             read.limit?.let { limits += it }
-            if (at.toLocalDate() >= today.minusDays(7)) read.foreign?.let { foreign += it }
+            if (at.toLocalDate() >= today.minusDays(7)) read.foreign?.takeIf { it.key !in fxDone }?.let { foreign += it }
             when (val r = read.result) {
                 is ReadResult.Parsed -> {
                     var t = Classifier.classify(r.parsed, at, profile, rules)
@@ -652,17 +663,21 @@ class Repo(val store: Store) {
         val l2 = com.girish.expensetracker.core.FactDedupe.apply(l1, { it.txn }, { it.channel })
         val kept = l2.kept.mapIndexed { i, r -> l2.alsoVia[i]?.let { r.copy(alsoVia = it) } ?: r }
         // Money moving between the owner's own accounts and cards is a transfer, not spend or income.
+        val pairIdx = mutableListOf<Pair<Int, Int>>()
         val paired = com.girish.expensetracker.core.Transfers.pair(
             kept.map { it.txn },
             isOwn = profile::isKnown,
             locked = { i -> kept[i].smsId?.let(overrides::containsKey) == true },
+            onPair = { d, c -> pairIdx += d to c },
         )
         // Loans and splits: paybacks from someone who owes money settle it instead of reducing spend.
         val owe = Owe.settle(paired)
         val deduped = kept.zip(owe.txns) { r, t -> r.copy(txn = t) }
+        val transferPairs = pairIdx.map { (d, c) -> TransferPair(deduped[d], deduped[c], kept[d].txn) }.sortedByDescending { it.debit.txn.day }
 
         return Snapshot(
             rows = deduped,
+            transferPairs = transferPairs,
             unparsed = unparsed.reversed(),
             hidden = hidden.reversed(),
             newSources = newSources.map { (s, body) -> NewSource(s, body) },
@@ -682,11 +697,23 @@ class Repo(val store: Store) {
             lastActivity = lastActivity,
             contactNames = contactNames,
             payeeReview = if (store.setting(KEY_PAYEE_REVIEW_DISMISSED) == "1") emptyList()
-                else com.girish.expensetracker.core.PayeeReviews.of(deduped.map { it.txn }, { ownRules.lookup(it) != null }, contactNames.keys),
+                else com.girish.expensetracker.core.PayeeReviews.of(deduped.map { it.txn }, { ownRules.lookup(it) != null }, contactNames.keys, today),
             ignored = (ignored.mapNotNull(com.girish.expensetracker.core.SourceMeta::parseKey) +
                 metas.values.filter { it.status == com.girish.expensetracker.core.SourceStatus.IGNORED }.map { it.source }).toSet(),
         )
     }
+
+    /**
+     * "Not a transfer": both alerts are pinned as the owner's own choice, so pairing never touches them again; the
+     * debit goes back to what it read as before pairing (a spend in its old category).
+     */
+    fun notTransfer(p: TransferPair) {
+        p.debit.smsId?.let { store.setOverride(it, p.before.category.takeIf { c -> c != "Transfer" && c != "Card bill" } ?: "Uncategorised", p.before.payeeType) }
+        p.credit.smsId?.let { store.setOverride(it, "Paid back", PayeeType.PERSON) }
+    }
+
+    /** A foreign charge entered in rupees: its flag goes away. */
+    fun foreignEntered(key: String) = store.setSetting(KEY_FX_DONE, (lines(KEY_FX_DONE) + key).joinToString("\n"))
 
     /** "Not a spend": this alert is never counted again (undo from More -> Hidden payments). */
     fun markNotSpend(smsId: Long) = store.setSetting(KEY_NOT_SPEND, (lines(KEY_NOT_SPEND) + smsId.toString()).joinToString("\n"))

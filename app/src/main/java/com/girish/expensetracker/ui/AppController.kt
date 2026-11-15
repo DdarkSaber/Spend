@@ -37,6 +37,8 @@ internal sealed interface Sheet {
     data object AlertApps : Sheet
     data object PayeeReview : Sheet
     data object Hidden : Sheet
+    data object Transfers : Sheet
+    data class Foreign(val charge: com.girish.expensetracker.core.Unusual) : Sheet
     data class TheyPaid(val personKey: String? = null) : Sheet
     data class AssignCredit(val row: Row) : Sheet
 }

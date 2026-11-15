@@ -89,16 +89,26 @@ data class PayeeReview(val label: String, val payments: Int, val likelyShop: Boo
 object PayeeReviews {
     private val honorific = Regex("^(MR|MRS|MS|DR|SMT|SHRI|MASTER)\\.?\\s", RegexOption.IGNORE_CASE)
 
-    fun of(txns: List<Txn>, ruled: (String) -> Boolean, contactMatched: Set<String>): List<PayeeReview> {
+    /** At most this many are asked at a time; the rest come up once these are answered. */
+    const val MAX = 30
+
+    /**
+     * With [today] set, only payees worth asking about: paid at least twice, the last time within a year, and never
+     * paying the owner back (money both ways is a person). One-off and long-gone payees stay people quietly.
+     */
+    fun of(txns: List<Txn>, ruled: (String) -> Boolean, contactMatched: Set<String>, today: java.time.LocalDate? = null): List<PayeeReview> {
         val byLabel = txns.filter { it.payeeType == PayeeType.PERSON && !it.parsed.counterparty.isNullOrBlank() && it.parsed.template != Template.MANUAL }
             .groupBy { it.parsed.counterparty!! }
-        return byLabel.filter { (label, _) ->
-            label !in contactMatched && !ruled(label) && !honorific.containsMatchIn(label.trim()) && ContactMatch.phoneOf(label) == null
+        return byLabel.filter { (label, list) ->
+            label !in contactMatched && !ruled(label) && !honorific.containsMatchIn(label.trim()) && ContactMatch.phoneOf(label) == null &&
+                (today == null || (list.size >= 2 && list.none { it.parsed.direction == Direction.CREDIT } &&
+                    list.maxOf { it.day } >= today.minusYears(1)))
         }.map { (label, list) ->
             val out = list.filter { it.parsed.direction == Direction.DEBIT }
             val gotBack = list.any { it.parsed.direction == Direction.CREDIT }
             val round = out.count { it.amountPaise % 1000 == 0L }
             PayeeReview(label, list.size, likelyShop = out.size >= 3 && round * 2 < out.size && !gotBack)
         }.sortedWith(compareByDescending<PayeeReview> { it.payments }.thenBy { it.label })
+            .let { if (today != null) it.take(MAX) else it }
     }
 }

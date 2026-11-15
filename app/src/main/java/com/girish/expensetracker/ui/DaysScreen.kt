@@ -65,6 +65,7 @@ internal fun DaysScreen(
     onFixAlerts: () -> Unit = {},
     backupWarning: String? = null,
     onBackup: () -> Unit = {},
+    onForeign: (com.girish.expensetracker.core.Unusual) -> Unit = {},
 ) {
     val t = LocalTones.current
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -117,7 +118,7 @@ internal fun DaysScreen(
                 PrimaryButton("Open backup", onBackup)
             }
         }
-        if (snap.unusual.isNotEmpty()) item { WorthALookPanel(snap.unusual) }
+        if (snap.unusual.isNotEmpty()) item { WorthALookPanel(snap.unusual, onForeign) }
         item { Segmented(listOf("7 Days", "Month", "4 Months", "All"), range, { range = it }) }
         if (snap.rows.isEmpty()) {
             item { EmptyLedger(onLoadDemo) }

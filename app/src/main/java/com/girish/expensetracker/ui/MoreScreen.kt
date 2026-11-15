@@ -86,6 +86,8 @@ internal class MoreActions(
     val matchContacts: () -> Unit = {},
     val hidden: () -> Unit = {},
     val hiddenCount: Int = 0,
+    val transfers: () -> Unit = {},
+    val transferCount: Int = 0,
 )
 
 /** Switches and their current values. */
@@ -170,6 +172,10 @@ internal fun MoreScreen(snap: Snapshot, setup: Setup, isNew: (Row) -> Boolean, o
                 Toggle(Icons.Outlined.ReceiptLong, "Audit log", "Records every alert for the validation week", settings.auditOn, settings.onAudit)
                 Hairline()
                 Action(Icons.Outlined.BugReport, "Export debug bundle", "Audit log + database, to share yourself", actions.debugBundle)
+                if (actions.transferCount > 0) {
+                    Hairline()
+                    Action(Icons.Outlined.AccountBalance, "Transfers found", "${actions.transferCount} paired between your accounts · tap to check", actions.transfers)
+                }
                 if (actions.hiddenCount > 0) {
                     Hairline()
                     Action(Icons.Outlined.BugReport, "Hidden payments", "${actions.hiddenCount} marked not a spend · tap to restore", actions.hidden)

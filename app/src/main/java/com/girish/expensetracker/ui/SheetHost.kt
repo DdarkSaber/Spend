@@ -71,6 +71,8 @@ internal fun SheetHost(ctl: AppController, snap: Snapshot, pickers: Pickers) {
             ctl.act { assignCredit(id, p?.labels?.firstOrNull()); if (p == null) "Back to the bank's payer name" else "Put under ${p.name}" }
         }
 
+        Sheet.Transfers -> TransfersSheet(snap.transferPairs, onDismiss = close) { p -> ctl.act { notTransfer(p); "Undone: both count as they read again" } }
+
         Sheet.Hidden -> HiddenSheet(snap.hidden, onDismiss = close) { id -> ctl.act { restoreNotSpend(id); "Restored" } }
 
         Sheet.PayeeReview -> PayeeReviewSheet(snap.payeeReview, onDismiss = close) { shops, persons ->
@@ -171,6 +173,10 @@ internal fun SheetHost(ctl: AppController, snap: Snapshot, pickers: Pickers) {
 
         Sheet.Cash -> AddCashSheet(onDismiss = close) { day, paise, note, category ->
             ctl.act { store.addManual(day, paise, note, category); "Added ${rupees(paise)} cash · $category" }
+        }
+
+        is Sheet.Foreign -> AddCashSheet(onDismiss = close, foreign = sheet.charge) { day, paise, note, category ->
+            ctl.act { store.addManual(day, paise, note, category); foreignEntered(sheet.charge.key); "Added ${rupees(paise)} · $category" }
         }
 
         Sheet.NewTrip -> NewTripSheet(onDismiss = close) { name, start, end ->

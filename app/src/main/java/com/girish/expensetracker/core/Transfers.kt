@@ -24,7 +24,11 @@ object Transfers {
      * [isOwn]: the owner's tracked accounts and cards. [locked]: payments the owner filed by hand (never changed).
      * Returns the same list with paired payments turned into transfers.
      */
-    fun pair(txns: List<Txn>, isOwn: (Source) -> Boolean, locked: (Int) -> Boolean = { false }): List<Txn> {
+    fun pair(
+        txns: List<Txn>, isOwn: (Source) -> Boolean, locked: (Int) -> Boolean = { false },
+        /** Told (debit index, credit index) for every pair made, so the owner can review and undo them. */
+        onPair: (Int, Int) -> Unit = { _, _ -> },
+    ): List<Txn> {
         fun eligible(i: Int, t: Txn, kinds: Set<Kind>) =
             !locked(i) && t.kind in kinds && !t.isSalary && t.parsed.source.bank != "CASH" && isOwn(t.parsed.source) &&
                 !(t.parsed.direction == Direction.DEBIT && t.parsed.source.type == SourceType.CARD)
@@ -55,6 +59,7 @@ object Transfers {
                 continue
             }
             waiting.remove(j)
+            if (isDebit) onPair(i, j) else onPair(j, i)
             val credit = if (isDebit) txns[j] else t
             val category = if (credit.parsed.source.type == SourceType.CARD) "Card bill" else "Transfer"
             for (k in listOf(i, j)) {

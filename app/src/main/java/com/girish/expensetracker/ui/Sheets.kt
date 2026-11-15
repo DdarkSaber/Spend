@@ -235,11 +235,16 @@ internal fun RowSheet(
 }
 
 @Composable
-internal fun AddCashSheet(onDismiss: () -> Unit, onSave: (LocalDate, Long, String, String) -> Unit) {
+internal fun AddCashSheet(
+    onDismiss: () -> Unit,
+    /** A foreign-currency card charge: entered in rupees on the day it was charged, no Today/Yesterday choice. */
+    foreign: com.girish.expensetracker.core.Unusual? = null,
+    onSave: (LocalDate, Long, String, String) -> Unit,
+) {
     val t = LocalTones.current
     var amount by remember { mutableStateOf("") }
-    var note by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf("Food") }
+    var note by remember { mutableStateOf(foreign?.title?.removePrefix("Foreign charge: ")?.let { "Foreign charge $it" } ?: "") }
+    var category by remember { mutableStateOf(if (foreign != null) "Shopping" else "Food") }
     var yesterday by remember { mutableStateOf(false) }
     val paise = amount.toBigDecimalOrNull()?.movePointRight(2)?.toLong()
     val fieldColors = OutlinedTextFieldDefaults.colors(
@@ -249,7 +254,11 @@ internal fun AddCashSheet(onDismiss: () -> Unit, onSave: (LocalDate, Long, Strin
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = t.panel) {
         LazyColumn(contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            item { Text("Cash spend", style = MaterialTheme.typography.headlineSmall, color = t.ink) }
+            item { Text(if (foreign != null) "Foreign charge in ₹" else "Cash spend", style = MaterialTheme.typography.headlineSmall, color = t.ink) }
+            if (foreign != null) item {
+                Text("Enter what it cost in rupees (from the bank app or statement). It counts as spend on ${foreign.day}.",
+                    style = MaterialTheme.typography.bodySmall, color = t.ink2)
+            }
             item {
                 OutlinedTextField(
                     value = amount, onValueChange = { amount = it.filter { c -> c.isDigit() || c == '.' } },
@@ -263,7 +272,7 @@ internal fun AddCashSheet(onDismiss: () -> Unit, onSave: (LocalDate, Long, Strin
                 OutlinedTextField(value = note, onValueChange = { note = it }, label = { Text("What for (optional)") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth(), colors = fieldColors, shape = RoundedCornerShape(10.dp))
             }
-            item { Segmented(listOf("Today", "Yesterday"), if (yesterday) 1 else 0, { yesterday = it == 1 }) }
+            if (foreign == null) item { Segmented(listOf("Today", "Yesterday"), if (yesterday) 1 else 0, { yesterday = it == 1 }) }
             item {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     CATEGORIES.forEach { c -> FilterChip(category == c, { category = c }, { Text(c) }, colors = chipColors(), border = chipBorder(category == c)) }
@@ -271,8 +280,8 @@ internal fun AddCashSheet(onDismiss: () -> Unit, onSave: (LocalDate, Long, Strin
             }
             item {
                 PrimaryButton(
-                    "Add cash spend",
-                    { onSave(LocalDate.now().minusDays(if (yesterday) 1 else 0), paise!!, note.ifBlank { "Cash" }, category) },
+                    if (foreign != null) "Add in ₹" else "Add cash spend",
+                    { onSave(foreign?.day ?: LocalDate.now().minusDays(if (yesterday) 1 else 0), paise!!, note.ifBlank { "Cash" }, category) },
                     enabled = paise != null && paise > 0,
                 )
             }

@@ -6,23 +6,22 @@ on:
     tags: ["v*"]
   pull_request:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    env:
-      KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
-      KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-      KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-      KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
     steps:
-      - uses: actions/checkout@v4
+      # Actions are pinned to commit SHAs (the tag each was at is in the comment).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-java@v5
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
           java-version: 21
 
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
 
       - name: Unit tests
         run: ./gradlew testDebugUnitTest
@@ -30,20 +29,28 @@ jobs:
       - name: Debug APK
         run: ./gradlew assembleDebug
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: spend-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           retention-days: 14
 
       # Release APK: built and signed only when the signing secrets are present (they are not on forks or PRs).
+      # The secrets are given to this one step only, never to the job, so no third-party action can read them.
       - name: Release APK
         id: release
-        if: ${{ env.KEYSTORE_B64 != '' }}
-        run: ./gradlew assembleRelease
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then echo "No signing secrets: release APK skipped"; echo "signed=false" >> "$GITHUB_OUTPUT"; exit 0; fi
+          ./gradlew assembleRelease
+          echo "signed=true" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/upload-artifact@v4
-        if: ${{ steps.release.outcome == 'success' }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ steps.release.outputs.signed == 'true' }}
         with:
           name: spend-release-apk
           path: app/build/outputs/apk/release/app-release.apk
@@ -51,7 +58,7 @@ jobs:
 
       # A pushed tag (v1.2.0) also publishes a GitHub Release with the signed APK attached.
       - name: Publish release on tag
-        if: ${{ startsWith(github.ref, 'refs/tags/v') && steps.release.outcome == 'success' }}
-        uses: softprops/action-gh-release@v2
+        if: ${{ startsWith(github.ref, 'refs/tags/v') && steps.release.outputs.signed == 'true' }}
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: app/build/outputs/apk/release/app-release.apk

@@ -173,6 +173,7 @@ fun AppRoot(
                         onFixAlerts = { openNotificationAccess(context) },
                         backupWarning = remember(s) { AutoBackup.warning(context) },
                         onBackup = { ctl.sheet = Sheet.AutoBackup },
+                        onForeign = { ctl.sheet = Sheet.Foreign(it) },
                         onLoadDemo = if (BuildConfig.DEBUG) ({ ctl.act { "Loaded ${loadDemo()} demo bank SMS (debug build only)" } }) else null,
                     )
                     Tab.MONTH -> MonthScreen(
@@ -304,6 +305,8 @@ private fun moreActions(ctl: AppController, s: Snapshot, pickers: Pickers, onBat
     importHistory = pickers.openArchive,
     matchContacts = pickers.matchContacts,
     hidden = { ctl.sheet = Sheet.Hidden },
+    transfers = { ctl.sheet = Sheet.Transfers },
+    transferCount = s.transferPairs.size,
     hiddenCount = s.hidden.size,
     sources = { ctl.page = Page.Sources },
     alertApps = { ctl.sheet = Sheet.AlertApps },
