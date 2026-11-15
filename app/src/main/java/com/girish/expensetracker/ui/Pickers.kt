@@ -83,8 +83,14 @@ internal fun rememberPickers(ctl: AppController): Pickers {
     }
     val csvLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) ctl.load({
-            runCatching { StatementCsv.parse(ctl.context.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() }) }.getOrNull()
-        }) { r ->
+            runCatching { ctl.context.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() } }.getOrNull()
+        }) { text ->
+            // Spend's own Export CSV: restore the ledger instead of reading it as a bank statement.
+            if (text != null && com.girish.expensetracker.core.SpendExport.isExport(text)) {
+                ctl.act { restoreExport(text) }
+                return@load
+            }
+            val r = text?.let { runCatching { StatementCsv.parse(it) }.getOrNull() }
             when {
                 r == null -> ctl.say("Couldn't read that file")
                 r.problem != null -> ctl.say(r.problem)

@@ -712,6 +712,30 @@ class Repo(val store: Store) {
         p.credit.smsId?.let { store.setOverride(it, "Paid back", PayeeType.PERSON) }
     }
 
+    /**
+     * Brings back a ledger from Spend's own Export CSV. Cash rows become cash entries (an identical one is not added
+     * twice); every other row becomes a statement row on its account or card, which is skipped wherever an SMS
+     * already covers it, so importing before or after the inbox re-import gives the same totals.
+     */
+    fun restoreExport(text: String): String {
+        val r = com.girish.expensetracker.core.SpendExport.parse(text)
+        val cash = r.rows.filter { it.source == null && it.debit }
+        val have = store.manualSince(cash.minOfOrNull { it.day } ?: LocalDate.now()).map { Triple(it.day, it.amountPaise, it.note) }.toHashSet()
+        var cashAdded = 0
+        for (e in cash) {
+            val note = e.payee.ifBlank { "Cash" }
+            if (have.add(Triple(e.day, e.amountPaise, note))) {
+                store.addManual(e.day, e.amountPaise, note, e.category.ifBlank { "Uncategorised" }); cashAdded++
+            }
+        }
+        var bankAdded = 0
+        r.rows.filter { it.source != null }.groupBy { it.source!! }.forEach { (src, list) ->
+            bankAdded += store.addStatementRows(src, list.map { StatementRow(it.day, it.amountPaise, it.debit, it.payee.ifBlank { "Restored from export" }) })
+        }
+        return "Restored ${bankAdded + cashAdded} of ${r.rows.size} rows ($cashAdded cash). Payments your SMS already cover are not counted twice." +
+            (if (r.skipped > 0) " ${r.skipped} unreadable rows skipped." else "")
+    }
+
     /** A foreign charge entered in rupees: its flag goes away. */
     fun foreignEntered(key: String) = store.setSetting(KEY_FX_DONE, (lines(KEY_FX_DONE) + key).joinToString("\n"))
 
