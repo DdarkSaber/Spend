@@ -136,7 +136,11 @@ object SmsReader {
             )?.let { p -> withOnlySource(p, profile) }
         // Offer and scam wording is never a transaction, however money-like it reads ("Rs.60,000 credited to your
         // pre-approved loan"). Exact layouts can't match such text; the generic rules are stopped here.
-        if (parsed != null && parsed.template.name.startsWith("GENERIC") && promoPhrases.any { it in lower }) return ReadResult.Promo
+        // The payee's own name is left out of that check: "...to LUCKY RESTAURANT" is a real payment.
+        if (parsed != null && parsed.template.name.startsWith("GENERIC")) {
+            val rest = parsed.counterparty?.trim()?.lowercase()?.takeIf { it.length >= 3 }?.let { lower.replace(it, " ") } ?: lower
+            if (promoPhrases.any { it in rest }) return ReadResult.Promo
+        }
         // A notification rebuilt as a card spend "at AX-SBICRD-P": the "merchant" is an SMS sender, so it was an offer.
         if (parsed?.counterparty?.let { dltHeader.matches(it.trim()) } == true) return ReadResult.Promo
         if (parsed == null) {

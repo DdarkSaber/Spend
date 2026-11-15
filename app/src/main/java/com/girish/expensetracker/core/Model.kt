@@ -93,6 +93,11 @@ data class Txn(
     val owedTo: SplitShare? = null,
     /** The part of a payment to a person that paid back what the owner owed them: not spend. Set by [Owe]. */
     val settlesPaise: Long = 0,
+    /**
+     * The part of money in from a person that is plain money in, not a payback of something the owner paid them: it
+     * does not lower spend, so a friend's transfer never pushes a month below zero. Set by [Owe].
+     */
+    val plainInPaise: Long = 0,
 ) {
     val day: LocalDate get() = parsed.date ?: receivedAt.toLocalDate()
     val amountPaise: Long get() = parsed.amountPaise

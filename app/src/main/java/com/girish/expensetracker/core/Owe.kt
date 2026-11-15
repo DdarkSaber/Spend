@@ -45,10 +45,21 @@ object Owe {
         if (item.left > 0) side += item
     }
 
+    /** Money in from a person pays back what the owner paid them within this many days before. */
+    const val PAYBACK_DAYS = 60L
+
+    /** Time order: what is used up or too old at the front can never pay anything back again. */
+    private fun prune(paidTo: ArrayDeque<Open>, day: LocalDate) {
+        while (paidTo.isNotEmpty() && (paidTo.first().left <= 0 ||
+                java.time.temporal.ChronoUnit.DAYS.between(paidTo.first().since, day) > PAYBACK_DAYS)) paidTo.removeFirst()
+    }
+
     /** [txns] must be in time order. */
     fun settle(txns: List<Txn>): Settled {
         val theyOwe = mutableListOf<Open>()
         val iOwe = mutableListOf<Open>()
+        // The owner's payments to people that counted as spend, oldest first.
+        val paidTo = ArrayDeque<Open>()
         val out = txns.map { t ->
             val who = t.parsed.counterparty.orEmpty()
             val toPerson = t.parsed.direction == Direction.DEBIT && who.isNotBlank() && t.payeeType == PayeeType.PERSON &&
@@ -69,6 +80,9 @@ object Owe {
                 }
                 t.kind == Kind.SPEND && toPerson -> {
                     val settled = take(iOwe, t.amountPaise) { it.isFor(who) }
+                    // What is left counted as spend; their money in later may pay it back.
+                    prune(paidTo, t.day)
+                    if (t.amountPaise - settled > 0) paidTo += Open(People.displayName(listOf(who)), who, t.amountPaise - settled, t.day)
                     when (settled) {
                         0L -> t
                         t.amountPaise -> paidBack(t)
@@ -77,13 +91,18 @@ object Owe {
                 }
                 t.kind == Kind.PERSON_CREDIT && who.isNotBlank() -> {
                     val owed = theyOwe.filter { it.left > 0 && it.isFor(who) }.sumOf { it.left }
-                    if (owed == 0L) t else {
-                        take(theyOwe, t.amountPaise) { it.isFor(who) }
-                        // Paying back more than they owe means the payment was (also) for something else: the debt is
-                        // cleared, and the payment stays an ordinary payback so the rest still lowers spend.
-                        if (t.amountPaise > owed + 100) t else t.copy(kind = Kind.REPAID, category = "Repaid")
+                    if (owed > 0L) take(theyOwe, t.amountPaise) { it.isFor(who) }
+                    if (owed > 0L && t.amountPaise <= owed + 100) t.copy(kind = Kind.REPAID, category = "Repaid")
+                    else {
+                        // Beyond any debt, money in from a person lowers spend only up to what the owner paid that
+                        // person recently (a shared bill paid back); the rest is plain money in.
+                        val rest = t.amountPaise - minOf(owed, t.amountPaise)
+                        prune(paidTo, t.day)
+                        val offset = take(paidTo, rest) { it.isFor(who) }
+                        t.copy(plainInPaise = t.amountPaise - offset)
                     }
                 }
+                t.kind == Kind.PERSON_CREDIT -> t.copy(plainInPaise = t.amountPaise)
                 else -> t
             }
         }
