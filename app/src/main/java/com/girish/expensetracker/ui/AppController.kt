@@ -35,6 +35,12 @@ internal sealed interface Sheet {
     data class SourceSettings(val source: com.girish.expensetracker.core.Source) : Sheet
     data class OlderSources(val result: Repo.ArchiveResult) : Sheet
     data object AlertApps : Sheet
+    data object PayeeReview : Sheet
+    data object Hidden : Sheet
+    data object Transfers : Sheet
+    data class Foreign(val charge: com.girish.expensetracker.core.Unusual) : Sheet
+    data class TheyPaid(val personKey: String? = null) : Sheet
+    data class AssignCredit(val row: Row) : Sheet
 }
 
 /** Full-screen pages that sit above the tabs (back returns to the tab). */
@@ -45,6 +51,8 @@ internal sealed interface Page {
     data object Year : Page
     data object Sources : Page
     data class Person(val key: String) : Page
+    data class SalaryPeriod(val start: java.time.LocalDate) : Page
+    data class Shop(val key: String) : Page
 }
 
 /**

@@ -14,11 +14,16 @@ data class Reading(val result: ReadResult, val statement: CardStatement?, val li
 object ParseCache {
 
     /** Bump whenever SmsReader, Generic, Teach, CardFacts or UnusualSpend.foreignCharge read any text differently. */
-    const val PARSER_VERSION = 1
+    const val PARSER_VERSION = 3
 
-    /** Stable across runs (no enum or object hash codes), so a restart keeps the cache. */
-    fun version(profile: Profile, learned: List<LearnedLayout>, zoneId: String): Long {
+    /**
+     * Stable across runs (no enum or object hash codes), so a restart keeps the cache. [appVersion] (the app's
+     * versionCode) is folded in, so every update re-reads history once even if nobody remembered to bump
+     * [PARSER_VERSION].
+     */
+    fun version(profile: Profile, learned: List<LearnedLayout>, zoneId: String, appVersion: Int = 0): Long {
         val text = buildString {
+            append(appVersion).append('\n')
             append(zoneId).append('\n')
             fun sources(s: Set<Source>) = s.map { "${it.bank}|${it.last4}|${it.type.name}" }.sorted().joinToString(",")
             append(sources(profile.accounts)).append('\n')

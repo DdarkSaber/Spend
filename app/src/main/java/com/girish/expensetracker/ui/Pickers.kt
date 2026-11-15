@@ -30,6 +30,7 @@ internal class Pickers(
     val openCsv: () -> Unit,
     /** Pick the one-time history file (.jsonl) and import it. */
     val openArchive: () -> Unit,
+    val matchContacts: () -> Unit = {},
 )
 
 @Composable
@@ -82,8 +83,14 @@ internal fun rememberPickers(ctl: AppController): Pickers {
     }
     val csvLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) ctl.load({
-            runCatching { StatementCsv.parse(ctl.context.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() }) }.getOrNull()
-        }) { r ->
+            runCatching { ctl.context.contentResolver.openInputStream(uri)!!.bufferedReader().use { it.readText() } }.getOrNull()
+        }) { text ->
+            // Spend's own Export CSV: restore the ledger instead of reading it as a bank statement.
+            if (text != null && com.girish.expensetracker.core.SpendExport.isExport(text)) {
+                ctl.act { restoreExport(text) }
+                return@load
+            }
+            val r = text?.let { runCatching { StatementCsv.parse(it) }.getOrNull() }
             when {
                 r == null -> ctl.say("Couldn't read that file")
                 r.problem != null -> ctl.say(r.problem)
@@ -92,6 +99,19 @@ internal fun rememberPickers(ctl: AppController): Pickers {
         }
     }
 
+    // Contacts: asked only from More → Match with contacts; matched on the phone, only the matches are kept.
+    val contactsPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (!granted) { ctl.say("Contacts not allowed, so nothing was matched"); return@rememberLauncherForActivityResult }
+        ctl.act {
+            val contacts = com.girish.expensetracker.data.Contacts.read(ctl.context)
+            // UPI and account payments only: a card spend is always at a shop.
+            val labels = snapshot().rows.filter { it.txn.parsed.source.type != com.girish.expensetracker.core.SourceType.CARD }
+                .mapNotNull { it.txn.parsed.counterparty?.takeIf(String::isNotBlank) }
+            val m = com.girish.expensetracker.core.ContactMatch.matchAll(labels, contacts)
+            saveContactMatches(m)
+            "Matched ${m.size} payee names to ${m.values.distinct().size} contacts"
+        }
+    }
     val archiveLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         ctl.act {
@@ -119,6 +139,7 @@ internal fun rememberPickers(ctl: AppController): Pickers {
             startAutoBackup = { pw -> password = pw; autoLauncher.launch("spend-auto-backup.spendbackup") },
             openCsv = { csvLauncher.launch(arrayOf("text/*", "application/vnd.ms-excel", "application/octet-stream")) },
             openArchive = { archiveLauncher.launch(arrayOf("*/*")) },
+            matchContacts = { contactsPermission.launch(android.Manifest.permission.READ_CONTACTS) },
         )
     }
 }

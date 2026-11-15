@@ -290,11 +290,17 @@ internal fun WhichCardPanel(rows: List<Row>, cardsOf: (String) -> List<Source>, 
             Gap(10.dp)
             val tx = r.txn
             val refund = tx.parsed.direction == Direction.CREDIT
+            // Money in on a card is usually a bill payment, sometimes a refund: say which.
+            val inLabel = when (tx.kind) {
+                com.girish.expensetracker.core.Kind.TRANSFER -> "Bill payment"
+                com.girish.expensetracker.core.Kind.REFUND -> "Refund"
+                else -> "Money in"
+            }
             val shop = tx.parsed.counterparty?.takeIf { it.isNotBlank() }
             Row(Modifier.fillMaxWidth().clickable { reading = if (reading == r) null else r }, verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text(shop ?: if (refund) "Refund" else "Card spend", style = MaterialTheme.typography.titleSmall, color = t.ink)
-                    Text("${tx.parsed.source.bank} · ${if (refund) "refund" else "spend"} · ${tx.day.format(dm)} · ${if (reading == r) "hide SMS" else "see SMS"}", style = MaterialTheme.typography.bodySmall, color = t.ink2)
+                    Text(shop ?: if (refund) inLabel else "Card spend", style = MaterialTheme.typography.titleSmall, color = t.ink)
+                    Text("${tx.parsed.source.bank} · ${if (refund) inLabel.lowercase() else "spend"} · ${tx.day.format(dm)} · ${if (reading == r) "hide SMS" else "see SMS"}", style = MaterialTheme.typography.bodySmall, color = t.ink2)
                 }
                 Text((if (refund) "+" else "") + rupeesExact(tx.amountPaise), style = AmountStyle, color = if (refund) t.accent else t.ink)
             }
@@ -511,7 +517,7 @@ internal fun BudgetSheet(plan: Plan, used: List<String>, onDismiss: () -> Unit, 
             item { Text("Monthly budgets", style = MaterialTheme.typography.headlineSmall, color = t.ink) }
             item {
                 OutlinedTextField(
-                    total, { total = it.filter(Char::isDigit) }, label = { Text("Whole salary month, ₹") }, singleLine = true,
+                    total, { total = it.filter(Char::isDigit) }, label = { Text("Whole month, ₹") }, singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), colors = fieldColors(), shape = RoundedCornerShape(10.dp), modifier = Modifier.fillMaxWidth(),
                 )
             }
@@ -556,7 +562,7 @@ internal fun SubscriptionsPanel(subs: List<Subscription>) {
 
 // ---------------------------------------------------------------- year
 
-/** Twelve salary months side by side, with the year's total and monthly average. */
+/** Twelve months side by side, with the year's total and monthly average. */
 @Composable
 internal fun YearPanel(snap: Snapshot) {
     val t = LocalTones.current
@@ -568,7 +574,7 @@ internal fun YearPanel(snap: Snapshot) {
         if (shown.isEmpty()) emptyList() else Ledger.byCategoryIn(snap.txns, shown.first().start..snap.today).filterValues { it > 0 }.toList().sortedByDescending { it.second }.take(6)
     }
     Panel {
-        PanelHeader("Last 12 salary months", if (shown.isEmpty()) null else "${shown.size} with data")
+        PanelHeader("Last 12 months", if (shown.isEmpty()) null else "${shown.size} with data")
         if (shown.size < 2) {
             Text("Year view fills in as months pass. Importing a bank statement adds older months.", style = MaterialTheme.typography.bodySmall, color = t.ink2)
             return@Panel
@@ -581,7 +587,7 @@ internal fun YearPanel(snap: Snapshot) {
         Gap(14.dp)
         val max = (totals.maxOrNull() ?: 1L).coerceAtLeast(1L)
         val avg = total / shown.size
-        Canvas(Modifier.fillMaxWidth().height(120.dp).semantics { contentDescription = "Spend per salary month: " + totals.joinToString { rupees(it) } }) {
+        Canvas(Modifier.fillMaxWidth().height(120.dp).semantics { contentDescription = "Spend per month: " + totals.joinToString { rupees(it) } }) {
             val slot = size.width / totals.size
             val barW = minOf(slot * 0.55f, 22.dp.toPx())
             val ya = size.height - size.height * avg / max
@@ -612,21 +618,25 @@ internal fun YearPanel(snap: Snapshot) {
 // ---------------------------------------------------------------- owed to you
 
 @Composable
-internal fun OwedPanel(debts: List<Debt>, onSettle: (Debt) -> Unit) {
-    if (debts.isEmpty()) return
+internal fun OwedPanel(debts: List<Debt>, onSettle: (Debt) -> Unit, iOwe: List<Debt> = emptyList(), onSettleIOwe: (Debt) -> Unit = {}) {
+    if (debts.isEmpty() && iOwe.isEmpty()) return
     val t = LocalTones.current
+    // One netted balance per person: either they owe you or you owe them.
     Panel(padding = PaddingValues(start = 18.dp, end = 18.dp, top = 18.dp, bottom = 8.dp)) {
-        PanelHeader("Owed to you", rupees(debts.sumOf { it.leftPaise }))
-        debts.forEachIndexed { k, d ->
+        PanelHeader("Balances", (if (debts.isNotEmpty()) "+" + rupees(debts.sumOf { it.leftPaise }) else "") +
+            (if (debts.isNotEmpty() && iOwe.isNotEmpty()) "  " else "") + (if (iOwe.isNotEmpty()) "−" + rupees(iOwe.sumOf { it.leftPaise }) else ""))
+        val all = debts.map { it to true } + iOwe.map { it to false }
+        all.forEachIndexed { k, (d, theyOwe) ->
             if (k > 0) Hairline()
+            val name = d.name.ifBlank { "Someone" }
             ListRow(
-                title = d.name.ifBlank { "Someone" },
-                subtitle = "since ${d.since.format(dm)} · clears when they pay you",
+                title = if (theyOwe) "$name owes you" else "You owe $name",
+                subtitle = "since ${d.since.format(dm)} · " + if (theyOwe) "clears when they pay you" else "clears when you pay them",
                 leading = { Avatar(d.name.ifBlank { "?" }, 36.dp) },
                 trailing = {
                     Column(horizontalAlignment = Alignment.End) {
-                        Text(rupees(d.leftPaise), style = AmountStyle, color = t.ink)
-                        Text("MARK PAID", style = DataLabel, color = t.accent, modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable { onSettle(d) }.padding(4.dp))
+                        Text(rupees(d.leftPaise), style = AmountStyle, color = if (theyOwe) t.ink else t.warn)
+                        Text("MARK PAID", style = DataLabel, color = t.accent, modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable { if (theyOwe) onSettle(d) else onSettleIOwe(d) }.padding(4.dp))
                     }
                 },
             )

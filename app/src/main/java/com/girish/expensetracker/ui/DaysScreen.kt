@@ -63,10 +63,13 @@ internal fun DaysScreen(
     onHabits: () -> Unit = {},
     alertAccessOff: Boolean = false,
     onFixAlerts: () -> Unit = {},
+    backupWarning: String? = null,
+    onBackup: () -> Unit = {},
+    onForeign: (com.girish.expensetracker.core.Unusual) -> Unit = {},
 ) {
     val t = LocalTones.current
     val context = androidx.compose.ui.platform.LocalContext.current
-    var range by remember { mutableStateOf(0) } // 0 = 7 days, 1 = salary month, 2 = 4 months
+    var range by remember { mutableStateOf(0) } // 0 = 7 days, 1 = this month, 2 = 4 months, 3 = all history
     var month by remember { mutableStateOf(YearMonth.from(snap.today)) }
     var selected by remember { mutableStateOf(snap.today) }
     // The calendar goes back to the first month with any data (all imported history), not a fixed window.
@@ -107,8 +110,16 @@ internal fun DaysScreen(
                 PrimaryButton("Turn on", onFixAlerts)
             }
         }
-        if (snap.unusual.isNotEmpty()) item { WorthALookPanel(snap.unusual) }
-        item { Segmented(listOf("7 Days", "Month", "4 Months"), range, { range = it }) }
+        if (backupWarning != null) item {
+            Panel {
+                PanelHeader("Backup is out of date")
+                Text(backupWarning, style = MaterialTheme.typography.bodyMedium, color = t.ink2)
+                Gap(10.dp)
+                PrimaryButton("Open backup", onBackup)
+            }
+        }
+        if (snap.unusual.isNotEmpty()) item { WorthALookPanel(snap.unusual, onForeign) }
+        item { Segmented(listOf("7 Days", "Month", "4 Months", "All"), range, { range = it }) }
         if (snap.rows.isEmpty()) {
             item { EmptyLedger(onLoadDemo) }
         } else {
@@ -142,7 +153,7 @@ internal fun DaysScreen(
             StatGrid(
                 listOf(
                     Stat("Today", rupees(snap.todayTotal), sub = count(rowsToday(snap), "payment"), highlight = true),
-                    Stat("Salary month", rupees(snap.monthTotal), sub = "since ${snap.cycleStart.format(dayMonth)}", up = if (p.hasLast) diff > 0 else null),
+                    Stat("This month", rupees(snap.monthTotal), sub = "since ${snap.cycleStart.format(dayMonth)}", up = if (p.hasLast) diff > 0 else null),
                     Stat("Avg per day", rupees(avg), sub = if (priorAvg > 0) "${rupees(priorAvg)} last month" else null, up = if (priorAvg > 0) avg > priorAvg else null),
                     Stat("This week", rupees(week.total), sub = if (week.priorTotal > 0) "${rupees(week.priorTotal)} week before" else null, up = if (week.priorTotal > 0) week.total > week.priorTotal else null),
                     Stat("Biggest day", best?.let { rupees(monthSeries.now[it]) } ?: "–", sub = best?.let { monthSeries.days[it].format(dayMonth) }),

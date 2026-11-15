@@ -49,6 +49,7 @@ import com.girish.expensetracker.core.Direction
 import com.girish.expensetracker.core.Ledger
 import com.girish.expensetracker.core.ParsedSms
 import com.girish.expensetracker.core.PayeeType
+import com.girish.expensetracker.core.PayeeRules
 import com.girish.expensetracker.core.ReadResult
 import com.girish.expensetracker.core.SmsReader
 import com.girish.expensetracker.core.Source
@@ -71,6 +72,12 @@ data class Row(
     val alsoVia: List<String> = emptyList(),
 )
 
+/** A debit and a credit the app paired as a transfer; [before] is the debit as it read before pairing. */
+data class TransferPair(val debit: Row, val credit: Row, val before: Txn) {
+    /** Only alerts can be pinned by hand (statement rows have no id to keep the choice on). */
+    val undoable: Boolean get() = debit.smsId != null || credit.smsId != null
+}
+
 data class UnparsedSms(val id: Long, val sender: String, val body: String, val receivedAt: LocalDateTime)
 data class NewSource(val source: Source, val example: String)
 
@@ -85,8 +92,12 @@ data class Snapshot(
     val statements: List<CardStatement> = emptyList(),
     val limitsSeen: List<LimitSeen> = emptyList(),
     val plan: Plan = Plan(),
-    /** Who still owes the owner money, from loans and splits. */
+    /** Who still owes the owner money, from loans and splits (netted against what the owner owes them). */
     val debts: List<Debt> = emptyList(),
+    /** Whom the owner still owes, from "They paid for me" (netted against what they owe the owner). */
+    val iOwe: List<Debt> = emptyList(),
+    /** Alerts the owner marked "Not a spend": never counted, restorable from More. */
+    val hidden: List<UnparsedSms> = emptyList(),
     /** Foreign-currency charges seen in the last week (they can't be counted in rupees, so they are flagged). */
     val foreign: List<Unusual> = emptyList(),
     /** Row key -> the owner's tag ("Goa trip", "office"). */
@@ -100,6 +111,12 @@ data class Snapshot(
     val collapses: List<Pair<Row, Row>> = emptyList(),
     /** Accounts and cards the owner chose to ignore: never counted. */
     val ignored: Set<Source> = emptySet(),
+    /** Payee label -> phone contact name, for payees matched to exactly one contact. */
+    val contactNames: Map<String, String> = emptyMap(),
+    /** Payees that are a person only by default, for the one-time "Shop or person?" review. */
+    val payeeReview: List<com.girish.expensetracker.core.PayeeReview> = emptyList(),
+    /** Debits and credits the app paired as moves between the owner's own accounts, newest first (reviewable). */
+    val transferPairs: List<TransferPair> = emptyList(),
 ) {
     fun statusOf(s: Source): com.girish.expensetracker.core.SourceStatus =
         com.girish.expensetracker.core.SourceMeta.effective(sourceMeta[s], lastActivity[s], today)
@@ -163,7 +180,9 @@ data class Snapshot(
     val unassignedCardRows: List<Row> by lazy {
         rows.filter { r ->
             val s = r.txn.parsed.source
-            r.smsId != null && s.type == SourceType.CARD && s.last4 == UNASSIGNED && trackedCards.count { it.bank == s.bank } >= 2
+            r.smsId != null && s.type == SourceType.CARD && s.last4 == UNASSIGNED && trackedCards.count { it.bank == s.bank } >= 2 &&
+                // A bank whose cards are all one group (one statement) needs no answer: the group counts these already.
+                cardGroups.none { g -> g.bank == s.bank && trackedCards.filter { it.bank == s.bank }.all { it in g.cards } }
         }.sortedByDescending { it.txn.receivedAt }
     }
 
@@ -195,7 +214,7 @@ data class Snapshot(
     val budgets: List<BudgetLine> by lazy { Budgets.lines(txns, cycleStart, today, plan.budgetTotal, plan.budgetByCategory) }
 
     /** Recurring charges, without loan instalments (those are listed as EMIs). */
-    /** Rent, maid, bills, SIPs: learned from the last three finished salary months. */
+    /** Rent, maid, bills, SIPs: learned from the last three finished months. */
     val fixedCosts: List<FixedCost> by lazy { FixedCosts.find(txns, Ledger.cycles(today, txns, 4).drop(1)) }
 
     val forecast: Forecast by lazy { Forecasts.of(txns, cycleStart, today, fixedCosts) }
@@ -251,6 +270,20 @@ fun sourceKey(s: Source) = "${s.bank}|${s.last4}|${s.type}"
 data class Owner(val state: String, val displayName: String, val salaryDay: Int, val tracked: Set<Source>)
 
 private const val KEY_SETUP = "setup"
+private const val KEY_CONTACT_MATCHES = "contact_matches"
+private const val KEY_SETTLED_OWED = "settled_owed"
+private const val KEY_NOT_SPEND = "not_spend"
+/** Foreign charges the owner entered in rupees (their flag keys): no longer flagged. */
+private const val KEY_FX_DONE = "fx_done"
+private const val KEY_CLEANED_128 = "cleaned_128"
+const val KEY_SENSITIVE_HIDDEN_AT = "sensitive_hidden_at"
+/** "last_alert:{package}" -> when a bank alert was last stored from that app (millis). */
+const val KEY_LAST_ALERT = "last_alert:"
+/** When the notification listener last connected / disconnected (millis), for the health line in Alert apps. */
+const val KEY_LISTENER_UP = "listener_up"
+const val KEY_LISTENER_DOWN = "listener_down"
+private const val KEY_CREDIT_PERSON = "credit_person"
+private const val KEY_PAYEE_REVIEW_DISMISSED = "payee_review_dismissed"
 private const val KEY_NAME = "display_name"
 private const val KEY_SALARY_DAY = "salary_day"
 private const val KEY_SELF_NAMES = "self_names"
@@ -367,13 +400,19 @@ class Repo(val store: Store) {
      * One notification text from [pkg]: bank from the text (the title is a hint), gate, re-post and same-text checks,
      * then stored like an SMS with channel "notif:{pkg}".
      */
-    fun ingestNotification(pkg: String, title: String?, text: String, at: Long): NotifOutcome {
+    fun ingestNotification(pkg: String, title: String?, text: String, at: Long, from: String? = null): NotifOutcome {
         val channel = "notif:$pkg"
-        val hash = java.security.MessageDigest.getInstance("SHA-256").digest((pkg + "\u0000" + text).toByteArray())
-            .joinToString("") { "%02x".format(it) }
-        if (!store.firstSeen(hash, at)) return NotifOutcome(text, null, "-", "repost", null, null)
-        val sender = com.girish.expensetracker.core.BankFromText.sender(text, title)
-            ?: return NotifOutcome(text, null, "-", "no-bank", null, null)
+        if (!store.firstSeen(sha(pkg + "\u0000" + text), at)) return NotifOutcome(text, null, "-", "repost", null, null)
+        // The notification of an SMS must pass the checks the SMS itself passes. A conversation under a phone number
+        // is a person or an unregistered sender (banks never alert from one), and a text the SMS reader already
+        // turned away stays turned away.
+        val name = from?.trim().orEmpty()
+        if (phoneNumber.matches(name)) return NotifOutcome(text, null, "phone-sender", "gate", null, null)
+        if (store.seen(rejectedKey(text))) return NotifOutcome(text, null, "sms-rejected", "gate", null, null)
+        // Titled with a sender header ("AX-SBICRD-P"): that is the real sender, promo suffix and all.
+        val sender = if (SmsReader.isSenderHeader(name)) name.uppercase().takeIf { SmsReader.bankOf(it) != null }
+            else com.girish.expensetracker.core.BankFromText.sender(text, title)
+        sender ?: return NotifOutcome(text, null, "-", "no-bank", null, null)
         val profile = profile()
         val learned = store.learned()
         val gate = com.girish.expensetracker.core.NotifGate.check(sender, text, profile, learned)
@@ -405,10 +444,28 @@ class Repo(val store: Store) {
         drop.forEach { saveSourceMeta((metas[it] ?: com.girish.expensetracker.core.SourceMeta(it)).copy(status = com.girish.expensetracker.core.SourceStatus.IGNORED)) }
     }
 
+    private val phoneNumber = Regex("^\\+?[\\d\\s()\\-]{7,}$")
+
+    private fun sha(text: String) =
+        java.security.MessageDigest.getInstance("SHA-256").digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
+
+    // Only a hash is kept (for 7 days), never the text: most turned-away SMS are personal.
+    private fun rejectedKey(body: String) = "sms:" + sha(com.girish.expensetracker.core.SameText.normalize(body))
+
+    /** Bumped when a notification copy is removed because its SMS was turned away, so the totals get refreshed. */
+    @Volatile var removedCopies = 0
+        private set
+
     /** Like [ingest], returning the stored SMS's id (for the quick-tag notification). */
     fun ingestId(sender: String, body: String, receivedAt: Long): Long? {
         return when (SmsReader.read(sender, body, profile(), store.learned())) {
-            ReadResult.NotBank, ReadResult.Promo -> null
+            ReadResult.NotBank, ReadResult.Promo -> {
+                // Its notification (Google Messages, Truecaller) must not get in by the other door: remember the text
+                // as turned away, and remove a copy that got stored before this SMS was read.
+                store.firstSeen(rejectedKey(body), receivedAt)
+                if (store.dropNotifCopies(body, receivedAt) > 0) removedCopies++
+                null
+            }
             // Informational bank SMS are kept too: a future layout may turn them into transactions.
             else -> store.insertSmsId(sender, body, receivedAt)
         }
@@ -481,13 +538,19 @@ class Repo(val store: Store) {
         val since = today.minusDays(days)
         val sinceMillis = since.atStartOfDay(zone).toInstant().toEpochMilli()
         val profile = profile()
-        val rules = store.rules()
+        val ownRules = store.rules()
+        // A payee matched to one phone contact is a person (the owner's own retags still win).
+        val contactNames = contactMatches()
+        val rules = ownRules.withDefaults(contactNames.keys.associateWith { PayeeRules.Rule(PayeeType.PERSON, "People") })
         val ignored = lines(KEY_IGNORED)
         val overrides = store.overrides()
         val splits = store.splits()
         val settledLoans = lines(KEY_SETTLED_LOANS)
+        val settledOwed = lines(KEY_SETTLED_OWED)
+        val creditPerson = creditPersons()
         val learned = store.learned()
         val foreign = mutableListOf<Unusual>()
+        val fxDone = lines(KEY_FX_DONE)
         val dismissedRent = lines(KEY_RENT_DISMISSED)
         val rentPayees = lines(KEY_RENT).mapNotNull { l -> l.split('|').takeIf { it.size == 2 }?.let { it[0] to (it[1].toLongOrNull() ?: 0L) } }
 
@@ -496,7 +559,7 @@ class Repo(val store: Store) {
         val metas = store.sourceMetas()
         // Each account or card's latest transaction day, before debit cards are moved under their accounts.
         val lastActivity = HashMap<Source, LocalDate>()
-        val parserVersion = com.girish.expensetracker.core.ParseCache.version(profile, learned, zone.id)
+        val parserVersion = com.girish.expensetracker.core.ParseCache.version(profile, learned, zone.id, com.girish.expensetracker.BuildConfig.VERSION_CODE)
         val readings = readings(parserVersion)
         val fresh = HashMap<Long, String>()
         val rows = mutableListOf<Row>()
@@ -507,9 +570,14 @@ class Repo(val store: Store) {
 
         // Level 0: the same alert stored twice (live + import with slightly different stamps, or an SMS and its
         // notification copy) is read once.
+        removeMisreadCards()
+        val notSpend = lines(KEY_NOT_SPEND).mapNotNull { it.toLongOrNull() }.toSet()
+        val hidden = mutableListOf<UnparsedSms>()
         val alerts = com.girish.expensetracker.core.SameText.keep(store.smsSince(sinceMillis), { it.sender }, { it.body }, { it.receivedAt }, { it.channel })
         for (sms in alerts) {
             val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(sms.receivedAt), zone)
+            // "Not a spend": the owner said this alert moved no money (an offer or scam read as a payment).
+            if (sms.id in notSpend) { hidden += UnparsedSms(sms.id, sms.sender, sms.body, at); continue }
             // Reading an SMS is the slow part, and its result only changes when the owner's cards or taught layouts do.
             val read = readings[sms.id] ?: com.girish.expensetracker.core.Reading(
                 SmsReader.read(sms.sender, sms.body, profile, learned),
@@ -520,7 +588,7 @@ class Repo(val store: Store) {
             // Statement and limit SMS move no money but tell how each credit card stands.
             read.statement?.let { statements += it }
             read.limit?.let { limits += it }
-            if (at.toLocalDate() >= today.minusDays(7)) read.foreign?.let { foreign += it }
+            if (at.toLocalDate() >= today.minusDays(7)) read.foreign?.takeIf { it.key !in fxDone }?.let { foreign += it }
             when (val r = read.result) {
                 is ReadResult.Parsed -> {
                     var t = Classifier.classify(r.parsed, at, profile, rules)
@@ -542,6 +610,12 @@ class Repo(val store: Store) {
                     }
                     else if (forced == null && rentPayees.any { (label, typical) -> com.girish.expensetracker.core.RentFinder.isRent(t, label, typical) }) t = t.copy(category = "Rent")
                     splits["sms:${sms.id}"]?.let { t = t.copy(splitWith = it) }
+                    // "Paid on their behalf": a credit the owner put under a person (the payer's name differs).
+                    creditPerson[sms.id]?.let { label ->
+                        if (t.parsed.direction == Direction.CREDIT) t = t.copy(
+                            parsed = t.parsed.copy(counterparty = label), kind = Kind.PERSON_CREDIT, payeeType = PayeeType.PERSON, category = "Paid back",
+                        )
+                    }
                     // A loan settled by hand: neither spend nor still owed.
                     if (t.kind == Kind.LENT && sms.id.toString() in settledLoans) t = t.copy(kind = Kind.REPAID, category = "Lent · settled")
                     rows += Row(t, sms.id, null, sms.body, sms.channel)
@@ -558,8 +632,11 @@ class Repo(val store: Store) {
         for (m in store.manualSince(since)) {
             val parsed = ParsedSms(Template.MANUAL, Direction.DEBIT, m.amountPaise, CASH, m.note, m.day, null, m.category)
             val at = LocalDateTime.ofInstant(Instant.ofEpochMilli(m.createdAt), zone)
-            val t = Classifier.classify(parsed, at, profile, rules)
-            rows += Row(splits["cash:${m.id}"]?.let { t.copy(splitWith = it) } ?: t, null, m.id, null, "cash")
+            var t = Classifier.classify(parsed, at, profile, rules)
+            splits["cash:${m.id}"]?.let { t = t.copy(splitWith = it) }
+            // "They paid for me": the owner's spend, and owed to that person until paid back (or marked paid).
+            if (m.owedTo != null && m.id.toString() !in settledOwed) t = t.copy(owedTo = SplitShare(m.owedTo, m.amountPaise, m.owedLabel))
+            rows += Row(t, null, m.id, null, "cash")
         }
 
         // Imported statement rows fill history from before the app; a row the SMS already covers is skipped.
@@ -586,18 +663,23 @@ class Repo(val store: Store) {
         val l2 = com.girish.expensetracker.core.FactDedupe.apply(l1, { it.txn }, { it.channel })
         val kept = l2.kept.mapIndexed { i, r -> l2.alsoVia[i]?.let { r.copy(alsoVia = it) } ?: r }
         // Money moving between the owner's own accounts and cards is a transfer, not spend or income.
+        val pairIdx = mutableListOf<Pair<Int, Int>>()
         val paired = com.girish.expensetracker.core.Transfers.pair(
             kept.map { it.txn },
             isOwn = profile::isKnown,
             locked = { i -> kept[i].smsId?.let(overrides::containsKey) == true },
+            onPair = { d, c -> pairIdx += d to c },
         )
         // Loans and splits: paybacks from someone who owes money settle it instead of reducing spend.
         val owe = Owe.settle(paired)
         val deduped = kept.zip(owe.txns) { r, t -> r.copy(txn = t) }
+        val transferPairs = pairIdx.map { (d, c) -> TransferPair(deduped[d], deduped[c], kept[d].txn) }.sortedByDescending { it.debit.txn.day }
 
         return Snapshot(
             rows = deduped,
+            transferPairs = transferPairs,
             unparsed = unparsed.reversed(),
+            hidden = hidden.reversed(),
             newSources = newSources.map { (s, body) -> NewSource(s, body) },
             today = today,
             owner = owner(),
@@ -606,16 +688,87 @@ class Repo(val store: Store) {
             limitsSeen = limits,
             plan = plan(),
             debts = owe.debts,
+            iOwe = owe.iOwe,
             foreign = foreign,
             tags = store.tags(),
             trips = store.trips(),
             sourceMeta = metas,
             collapses = l2.collapses.map { it.kept to it.dropped },
             lastActivity = lastActivity,
+            contactNames = contactNames,
+            payeeReview = if (store.setting(KEY_PAYEE_REVIEW_DISMISSED) == "1") emptyList()
+                else com.girish.expensetracker.core.PayeeReviews.of(deduped.map { it.txn }, { ownRules.lookup(it) != null }, contactNames.keys, today),
             ignored = (ignored.mapNotNull(com.girish.expensetracker.core.SourceMeta::parseKey) +
                 metas.values.filter { it.status == com.girish.expensetracker.core.SourceStatus.IGNORED }.map { it.source }).toSet(),
         )
     }
+
+    /**
+     * "Not a transfer": both alerts are pinned as the owner's own choice, so pairing never touches them again; the
+     * debit goes back to what it read as before pairing (a spend in its old category).
+     */
+    fun notTransfer(p: TransferPair) {
+        p.debit.smsId?.let { store.setOverride(it, p.before.category.takeIf { c -> c != "Transfer" && c != "Card bill" } ?: "Uncategorised", p.before.payeeType) }
+        p.credit.smsId?.let { store.setOverride(it, "Paid back", PayeeType.PERSON) }
+    }
+
+    /**
+     * Brings back a ledger from Spend's own Export CSV. Cash rows become cash entries (an identical one is not added
+     * twice); every other row becomes a statement row on its account or card, which is skipped wherever an SMS
+     * already covers it, so importing before or after the inbox re-import gives the same totals.
+     */
+    fun restoreExport(text: String): String {
+        val r = com.girish.expensetracker.core.SpendExport.parse(text)
+        val cash = r.rows.filter { it.source == null && it.debit }
+        val have = store.manualSince(cash.minOfOrNull { it.day } ?: LocalDate.now()).map { Triple(it.day, it.amountPaise, it.note) }.toHashSet()
+        var cashAdded = 0
+        for (e in cash) {
+            val note = e.payee.ifBlank { "Cash" }
+            if (have.add(Triple(e.day, e.amountPaise, note))) {
+                store.addManual(e.day, e.amountPaise, note, e.category.ifBlank { "Uncategorised" }); cashAdded++
+            }
+        }
+        var bankAdded = 0
+        r.rows.filter { it.source != null }.groupBy { it.source!! }.forEach { (src, list) ->
+            bankAdded += store.addStatementRows(src, list.map { StatementRow(it.day, it.amountPaise, it.debit, it.payee.ifBlank { "Restored from export" }) })
+        }
+        return "Restored ${bankAdded + cashAdded} of ${r.rows.size} rows ($cashAdded cash). Payments your SMS already cover are not counted twice." +
+            (if (r.skipped > 0) " ${r.skipped} unreadable rows skipped." else "")
+    }
+
+    /** A foreign charge entered in rupees: its flag goes away. */
+    fun foreignEntered(key: String) = store.setSetting(KEY_FX_DONE, (lines(KEY_FX_DONE) + key).joinToString("\n"))
+
+    /** "Not a spend": this alert is never counted again (undo from More -> Hidden payments). */
+    fun markNotSpend(smsId: Long) = store.setSetting(KEY_NOT_SPEND, (lines(KEY_NOT_SPEND) + smsId.toString()).joinToString("\n"))
+
+    fun restoreNotSpend(smsId: Long) = store.setSetting(KEY_NOT_SPEND, (lines(KEY_NOT_SPEND) - smsId.toString()).joinToString("\n"))
+
+    /**
+     * Once: 1.2.3-1.2.7 rebuilt offers shown by other apps (Google Messages) as SBI Card spends. Those rows hold the
+     * rebuilt sentence, not a bank's text, and only Truecaller draws transaction cards, so they are removed.
+     */
+    private fun removeMisreadCards() {
+        if (store.setting(KEY_CLEANED_128) == "1") return
+        store.writableDatabase.execSQL(
+            "DELETE FROM sms WHERE channel LIKE 'notif:%' AND channel != 'notif:com.truecaller' " +
+                "AND body LIKE 'Rs.% spent on your % Credit Card % on __/__/__.%' AND length(body) < 140 AND body NOT LIKE '%not done by you%'"
+        )
+        store.setSetting(KEY_CLEANED_128, "1")
+    }
+
+    /** Payee label -> the phone contact's saved name (matched on the device; only matches are kept). */
+    fun contactMatches(): Map<String, String> = com.girish.expensetracker.core.ContactMatch.decode(store.setting(KEY_CONTACT_MATCHES))
+
+    fun saveContactMatches(m: Map<String, String>) = store.setSetting(KEY_CONTACT_MATCHES, com.girish.expensetracker.core.ContactMatch.encode(m))
+
+    /** "Shop or person?" answers: each saved as a payee rule; the review card is gone once dismissed. */
+    fun answerPayees(shops: Collection<String>, persons: Collection<String>) {
+        shops.forEach { store.setRule(it, PayeeType.MERCHANT, com.girish.expensetracker.core.PayeeGuess.category(it) ?: "Uncategorised") }
+        persons.forEach { store.setRule(it, PayeeType.PERSON, "People") }
+    }
+
+    fun dismissPayeeReview() = store.setSetting(KEY_PAYEE_REVIEW_DISMISSED, "1")
 
     /** Save a layout taught from an unread SMS; that SMS and every later one like it are read from now on. */
     fun teach(layout: LearnedLayout) = store.addLearned(layout)
@@ -626,6 +779,31 @@ class Repo(val store: Store) {
     fun rowKey(row: Row): String? = row.smsId?.let { "sms:$it" } ?: row.manualId?.let { "cash:$it" }
 
     fun setSplit(row: Row, shares: List<SplitShare>) { rowKey(row)?.let { store.setSplit(it, shares) } }
+
+    /** "They paid for me": [name] paid [paise] for the owner (counts as the owner's spend; the owner owes them). */
+    fun addTheyPaid(day: LocalDate, paise: Long, name: String, label: String?, category: String, note: String) =
+        store.addManual(day, paise, note.ifBlank { "Paid by $name" }, category, name, label)
+
+    /** smsId -> person label for credits the owner put under a person ("paid on their behalf"). */
+    fun creditPersons(): Map<Long, String> = lines(KEY_CREDIT_PERSON).mapNotNull { l ->
+        val i = l.indexOf('|'); if (i <= 0) null else l.substring(0, i).toLongOrNull()?.let { it to l.substring(i + 1) }
+    }.toMap()
+
+    /** Put the credit [smsId] under [label] (null: back to the bank's payer name). */
+    fun assignCredit(smsId: Long, label: String?) {
+        val m = creditPersons().toMutableMap()
+        if (label == null) m.remove(smsId) else m[smsId] = label.replace('\n', ' ')
+        store.setSetting(KEY_CREDIT_PERSON, m.entries.joinToString("\n") { "${it.key}|${it.value}" })
+    }
+
+    /** Mark everything the owner owes [debt]'s person as paid (in cash, or anywhere the bank SMS can't see). */
+    fun settleIOwe(debt: Debt, rows: List<Row>) {
+        val ids = rows.filter { r ->
+            val o = r.txn.owedTo ?: return@filter false
+            r.manualId != null && ((debt.label != null && o.label == debt.label) || o.name == debt.name)
+        }.map { it.manualId!!.toString() }
+        if (ids.isNotEmpty()) store.setSetting(KEY_SETTLED_OWED, (lines(KEY_SETTLED_OWED) + ids).joinToString("\n"))
+    }
 
     /** Mark everything [debt]'s person owes as paid (in cash, or anywhere the bank SMS can't see). */
     fun settleDebt(debt: Debt, rows: List<Row>) {
@@ -788,7 +966,7 @@ class Repo(val store: Store) {
     fun setStatementDay(card: Source, day: Int?) =
         saveKeyed(KEY_STATEMENT_DAYS, keyed(KEY_STATEMENT_DAYS).let { if (day == null) it - key(card) else it + (key(card) to day.toLong()) })
 
-    /** [category] null is the whole salary month; [paise] null or 0 removes the budget. */
+    /** [category] null is the whole month; [paise] null or 0 removes the budget. */
     fun setBudget(category: String?, paise: Long?) {
         if (category == null) store.setSetting(KEY_BUDGET_TOTAL, (paise ?: 0L).toString())
         else saveKeyed(KEY_BUDGETS, keyed(KEY_BUDGETS).let { if (paise == null || paise <= 0) it - category else it + (category to paise) })

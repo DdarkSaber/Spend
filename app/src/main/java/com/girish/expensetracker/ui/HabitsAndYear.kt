@@ -67,14 +67,14 @@ import java.util.Locale
 
 // ---------------------------------------------------------------- forecast (Month · Overview, running month)
 
-/** Where this salary month is heading: fixed costs (paid and still to come) plus everyday spending at today's pace. */
+/** Where this month is heading: fixed costs (paid and still to come) plus everyday spending at today's pace. */
 @Composable
 internal fun ForecastPanel(f: Forecast) {
     val t = LocalTones.current
     Panel {
         PanelHeader("Month-end forecast", "${count(f.daysLeft, "day")} left")
         Text(rupees(f.totalPaise), style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight(700)), color = t.ink)
-        Text("expected by the end of this salary month", style = MaterialTheme.typography.bodySmall, color = t.ink2)
+        Text("expected by the end of this month", style = MaterialTheme.typography.bodySmall, color = t.ink2)
         Gap(14.dp)
         Row(Modifier.fillMaxWidth()) {
             Column(Modifier.weight(1f)) {
@@ -229,7 +229,7 @@ internal fun NewRecurringPanel(items: List<NewRecurring>) {
 
 // ---------------------------------------------------------------- year in Spend (More)
 
-/** The last 12 salary months in one page, shareable as an image (through Android's share sheet: no internet). */
+/** The last 12 months in one page, shareable as an image (through Android's share sheet: no internet). */
 @Composable
 internal fun YearScreen(snap: Snapshot, onBack: () -> Unit, onShare: () -> Unit) {
     val t = LocalTones.current

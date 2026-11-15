@@ -1,5 +1,6 @@
 package com.girish.expensetracker.ui
 
+import androidx.compose.material.icons.outlined.Contacts
 import androidx.compose.material.icons.outlined.EmojiEvents
 import androidx.compose.material.icons.outlined.AccountBalance
 import androidx.compose.material.icons.outlined.NotificationsActive
@@ -82,6 +83,11 @@ internal class MoreActions(
     val askCardGroupsAgain: (String) -> Unit = {},
     val alertApps: () -> Unit = {},
     val debugBundle: () -> Unit = {},
+    val matchContacts: () -> Unit = {},
+    val hidden: () -> Unit = {},
+    val hiddenCount: Int = 0,
+    val transfers: () -> Unit = {},
+    val transferCount: Int = 0,
 )
 
 /** Switches and their current values. */
@@ -113,6 +119,8 @@ internal fun MoreScreen(snap: Snapshot, setup: Setup, isNew: (Row) -> Boolean, o
                 Action(Icons.Outlined.CreditCard, "Accounts, name & salary day", "What the app learned from your SMS", actions.reviewSetup)
                 Hairline()
                 Action(Icons.Outlined.AccountBalance, "Cards and accounts", "Active, past and ignored · add-on and debit cards", actions.sources)
+                Hairline()
+                Action(Icons.Outlined.Contacts, "Match with contacts", "People under your contacts' saved names · matched on the phone", actions.matchContacts)
                 Hairline()
                 Action(Icons.Outlined.Savings, "Budgets", "Monthly and per category, with alerts", actions.budgets)
                 Hairline()
@@ -153,7 +161,7 @@ internal fun MoreScreen(snap: Snapshot, setup: Setup, isNew: (Row) -> Boolean, o
                     actions.streak,
                 )
                 Hairline()
-                Action(Icons.Outlined.EmojiEvents, "Your year", "Last 12 salary months in one page, shareable", actions.year)
+                Action(Icons.Outlined.EmojiEvents, "Your year", "Last 12 months in one page, shareable", actions.year)
             }
         }
 
@@ -164,6 +172,14 @@ internal fun MoreScreen(snap: Snapshot, setup: Setup, isNew: (Row) -> Boolean, o
                 Toggle(Icons.Outlined.ReceiptLong, "Audit log", "Records every alert for the validation week", settings.auditOn, settings.onAudit)
                 Hairline()
                 Action(Icons.Outlined.BugReport, "Export debug bundle", "Audit log + database, to share yourself", actions.debugBundle)
+                if (actions.transferCount > 0) {
+                    Hairline()
+                    Action(Icons.Outlined.AccountBalance, "Transfers found", "${actions.transferCount} paired between your accounts · tap to check", actions.transfers)
+                }
+                if (actions.hiddenCount > 0) {
+                    Hairline()
+                    Action(Icons.Outlined.BugReport, "Hidden payments", "${actions.hiddenCount} marked not a spend · tap to restore", actions.hidden)
+                }
             }
         }
 

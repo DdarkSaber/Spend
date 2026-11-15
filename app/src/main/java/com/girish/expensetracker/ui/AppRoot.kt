@@ -115,6 +115,13 @@ fun AppRoot(
             ctl.reload()
         }
     }
+    // Every open: read any bank SMS the receiver missed while the app was stopped.
+    LaunchedEffect(tick) {
+        if (setup.sms && withContext(Dispatchers.IO) { !repo.needsImport() }) {
+            val r = withContext(Dispatchers.IO) { Importer.catchUp(context) }
+            if (r.stored > 0) ctl.reload()
+        }
+    }
     LaunchedEffect(tick) {
         seenBefore = Seen.get(context)
         Seen.markNow(context)
@@ -164,6 +171,9 @@ fun AppRoot(
                         onHabits = { ctl.page = Page.Habits },
                         alertAccessOff = alertAccessOff,
                         onFixAlerts = { openNotificationAccess(context) },
+                        backupWarning = remember(s) { AutoBackup.warning(context) },
+                        onBackup = { ctl.sheet = Sheet.AutoBackup },
+                        onForeign = { ctl.sheet = Sheet.Foreign(it) },
                         onLoadDemo = if (BuildConfig.DEBUG) ({ ctl.act { "Loaded ${loadDemo()} demo bank SMS (debug build only)" } }) else null,
                     )
                     Tab.MONTH -> MonthScreen(
@@ -174,6 +184,8 @@ fun AppRoot(
                                 if (yes) "Payments to ${c.name} of about ${rupees(c.typicalPaise)} are now Rent" else "OK, not rent"
                             }
                         },
+                        onSalary = { ctl.page = Page.SalaryPeriod(it) },
+                        onShop = { ctl.page = Page.Shop(it) },
                         onRow = openRow,
                     )
                     Tab.CARDS -> CardsScreen(s, isNew, onCardSettings = { ctl.sheet = Sheet.CardSettings(it) },
@@ -207,6 +219,10 @@ fun AppRoot(
                         s,
                         onSettle = { d -> ctl.act { settleDebt(d, s.rows); "${d.name} is settled" } },
                         onGroup = { ctl.sheet = Sheet.Group(it) },
+                        onReviewPayees = { ctl.sheet = Sheet.PayeeReview },
+                        onTheyPaid = { ctl.sheet = Sheet.TheyPaid() },
+                        onSettleIOwe = { d -> ctl.act { settleIOwe(d, s.rows); "Marked paid: ${d.name}" } },
+                        onDismissReview = { ctl.act { dismissPayeeReview(); "OK. Tap ✎ on any payment to change it later" } },
                     ) { ctl.page = Page.Person(it.key) }
                     Tab.MORE -> MoreScreen(
                         snap = s, setup = setup, isNew = isNew, onRow = openRow,
@@ -254,11 +270,14 @@ private fun PageHost(ctl: AppController, s: Snapshot, isNew: (Row) -> Boolean, o
             s, isNew, onBack = { ctl.page = null }, onNew = { ctl.sheet = Sheet.NewTrip },
             onDelete = { trip -> ctl.act { store.deleteTrip(trip.id); "Deleted ${trip.name}" } }, onRow = openRow,
         )
+        is Page.Shop -> ShopScreen(s, p.key, isNew, onBack = { ctl.page = null }, onRow = openRow)
+        is Page.SalaryPeriod -> SalaryPeriodScreen(s, p.start, isNew, onBack = { ctl.page = null }, onRow = openRow)
         is Page.Person -> {
             val person = people(s).firstOrNull { it.key == p.key }
             if (person == null) ctl.page = null
             else PersonScreen(
                 snap = s, person = person, onBack = { ctl.page = null }, onRow = openRow,
+                onTheyPaid = { ctl.sheet = Sheet.TheyPaid(person.key) },
                 onMarkShop = { who ->
                     ctl.page = null
                     ctl.act {
@@ -284,6 +303,11 @@ private fun moreActions(ctl: AppController, s: Snapshot, pickers: Pickers, onBat
     },
     importStatement = pickers.openCsv,
     importHistory = pickers.openArchive,
+    matchContacts = pickers.matchContacts,
+    hidden = { ctl.sheet = Sheet.Hidden },
+    transfers = { ctl.sheet = Sheet.Transfers },
+    transferCount = s.transferPairs.size,
+    hiddenCount = s.hidden.size,
     sources = { ctl.page = Page.Sources },
     alertApps = { ctl.sheet = Sheet.AlertApps },
     debugBundle = {

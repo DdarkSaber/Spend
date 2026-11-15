@@ -10,15 +10,17 @@ object BankFromText {
     private val I = RegexOption.IGNORE_CASE
 
     private val ordered: List<Pair<Regex, String>> = listOf(
-        Regex("SBI\\s*Credit\\s*Card|SBI\\s*Card", I) to "SBICRD",
+        // Not when SBI Card is only the payee ("paid to SBI Cards" in an HDFC alert).
+        Regex("(?<!to\\s)(?<!towards\\s)(?<!at\\s)(?:SBI\\s*Credit\\s*Card|SBI\\s*Card)", I) to "SBICRD",
         Regex("HDFC\\s*Bank", I) to "HDFCBK",
         Regex("ICICI\\s*Bank", I) to "ICICIT",
         Regex("DCB\\s*Bank|\\bNiyo\\b", I) to "DCBANK",
         Regex("Bank\\s+of\\s+Baroda", I) to "BOBTXN",
         Regex("Punjab\\s+National\\s+Bank", I) to "PNBSMS",
-        Regex("Bank\\s+of\\s+India", I) to "BOIIND",
-        Regex("Indian\\s+Overseas\\s+Bank", I) to "IOBCHN",
         Regex("Central\\s+Bank\\s+of\\s+India", I) to "CENTBK",
+        // "State Bank of India" and "Central Bank of India" are other banks.
+        Regex("(?<!State\\s)(?<!Central\\s)Bank\\s+of\\s+India", I) to "BOIIND",
+        Regex("Indian\\s+Overseas\\s+Bank", I) to "IOBCHN",
         Regex("South\\s+Indian\\s+Bank", I) to "SIBSMS",
         Regex("City\\s+Union\\s+Bank", I) to "CUBANK",
         Regex("Union\\s+Bank", I) to "UNIONB",

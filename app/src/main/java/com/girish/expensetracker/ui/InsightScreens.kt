@@ -98,7 +98,7 @@ internal fun LockScreen(onUnlock: () -> Unit) {
 // ---------------------------------------------------------------- worth a look
 
 @Composable
-internal fun WorthALookPanel(items: List<Unusual>) {
+internal fun WorthALookPanel(items: List<Unusual>, onForeign: (Unusual) -> Unit = {}) {
     if (items.isEmpty()) return
     val t = LocalTones.current
     Panel(padding = PaddingValues(start = 18.dp, end = 18.dp, top = 18.dp, bottom = 8.dp)) {
@@ -106,7 +106,8 @@ internal fun WorthALookPanel(items: List<Unusual>) {
         items.take(5).forEachIndexed { k, u ->
             if (k > 0) Hairline()
             ListRow(
-                title = u.title, subtitle = u.text,
+                title = u.title, subtitle = if (u.key.startsWith("fx|")) "${u.text} Tap to enter it in ₹." else u.text,
+                onClick = if (u.key.startsWith("fx|")) ({ onForeign(u) }) else null,
                 leading = {
                     Box(Modifier.size(36.dp).clip(CircleShape).background(t.warn.copy(alpha = 0.14f)), contentAlignment = Alignment.Center) {
                         Icon(Icons.Outlined.WarningAmber, contentDescription = null, tint = t.warn, modifier = Modifier.size(20.dp))
@@ -130,7 +131,7 @@ internal fun SavingsPanel(months: List<SavingsMonth>) {
         Row(verticalAlignment = Alignment.Bottom) {
             Text("${(now.rate * 100).toInt()}%", style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight(700)), color = if (now.rate < 0) t.warn else t.ink)
             Spacer(Modifier.width(8.dp))
-            Text("saved so far this salary month · ${rupees(now.savedPaise)}", style = MaterialTheme.typography.bodySmall, color = t.ink2, modifier = Modifier.padding(bottom = 6.dp))
+            Text("saved so far this month · ${rupees(now.savedPaise)}", style = MaterialTheme.typography.bodySmall, color = t.ink2, modifier = Modifier.padding(bottom = 6.dp))
         }
         if (months.size > 1) {
             Gap(14.dp)

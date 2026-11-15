@@ -44,9 +44,39 @@ internal fun SheetHost(ctl: AppController, snap: Snapshot, pickers: Pickers) {
                 },
                 onDeleteCash = { id -> ctl.act { store.deleteManual(id); "Cash entry deleted" } },
                 onSplit = { ctl.sheet = Sheet.Split(row) },
+                onNotSpend = row.smsId?.let { id -> { ctl.sheet = null; ctl.act { markNotSpend(id); "Hidden. Undo in More → Hidden payments" } } },
+                onAssignCredit = if (row.smsId != null && row.txn.parsed.direction == com.girish.expensetracker.core.Direction.CREDIT &&
+                    row.txn.kind in setOf(com.girish.expensetracker.core.Kind.PERSON_CREDIT, com.girish.expensetracker.core.Kind.REPAID, com.girish.expensetracker.core.Kind.INCOME)) ({ ctl.sheet = Sheet.AssignCredit(row) }) else null,
+                onShop = if (com.girish.expensetracker.core.Shops.isShopPayment(row.txn)) ({ ctl.sheet = null; ctl.page = Page.Shop(com.girish.expensetracker.core.Shops.keyOf(snap.txns, row.txn.parsed.counterparty!!)) }) else null,
                 tag = snap.tagOf(row), knownTags = (snap.tags.values + snap.trips.map { it.name }).distinct().sorted(),
                 onTag = { tag -> ctl.act(closeSheet = false) { setTag(row, tag); if (tag.isBlank()) "Tag removed" else "Tagged “${tag.trim()}”" } },
+                onReport = { reason ->
+                    ctl.act {
+                        if (com.girish.expensetracker.data.Issues.report(ctl.context, row, reason)) "Reported: $reason. It goes with the next debug bundle"
+                        else "Couldn't save the report"
+                    }
+                },
             )
+        }
+
+        is Sheet.TheyPaid -> {
+            val all = people(snap)
+            TheyPaidSheet(all, all.firstOrNull { it.key == sheet.personKey }, onDismiss = close) { day, paise, name, label, category, note ->
+                ctl.act { addTheyPaid(day, paise, name, label, category, note); "Added ${rupees(paise)} · you owe $name" }
+            }
+        }
+
+        is Sheet.AssignCredit -> AssignCreditSheet(sheet.row, people(snap), assigned = sheet.row.smsId?.let { it in ctl.repo.creditPersons() } == true, onDismiss = close) { p ->
+            val id = sheet.row.smsId ?: return@AssignCreditSheet
+            ctl.act { assignCredit(id, p?.labels?.firstOrNull()); if (p == null) "Back to the bank's payer name" else "Put under ${p.name}" }
+        }
+
+        Sheet.Transfers -> TransfersSheet(snap.transferPairs, onDismiss = close) { p -> ctl.act { notTransfer(p); "Undone: both count as they read again" } }
+
+        Sheet.Hidden -> HiddenSheet(snap.hidden, onDismiss = close) { id -> ctl.act { restoreNotSpend(id); "Restored" } }
+
+        Sheet.PayeeReview -> PayeeReviewSheet(snap.payeeReview, onDismiss = close) { shops, persons ->
+            ctl.act { answerPayees(shops, persons); "Saved: ${count(shops.size, "shop")}, ${count(persons.size, "person")}" }
         }
 
         is Sheet.Split -> SplitSheet(
@@ -143,6 +173,10 @@ internal fun SheetHost(ctl: AppController, snap: Snapshot, pickers: Pickers) {
 
         Sheet.Cash -> AddCashSheet(onDismiss = close) { day, paise, note, category ->
             ctl.act { store.addManual(day, paise, note, category); "Added ${rupees(paise)} cash · $category" }
+        }
+
+        is Sheet.Foreign -> AddCashSheet(onDismiss = close, foreign = sheet.charge) { day, paise, note, category ->
+            ctl.act { store.addManual(day, paise, note, category); foreignEntered(sheet.charge.key); "Added ${rupees(paise)} · $category" }
         }
 
         Sheet.NewTrip -> NewTripSheet(onDismiss = close) { name, start, end ->

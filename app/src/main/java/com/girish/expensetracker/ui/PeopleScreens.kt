@@ -73,10 +73,17 @@ class Person(val key: String, val name: String, val labels: List<String>, val ro
 fun people(snap: Snapshot): List<Person> {
     val personal = snap.rows.filter { it.txn.payeeType == PayeeType.PERSON && !it.txn.parsed.counterparty.isNullOrBlank() }
     val labels = personal.map { it.txn.parsed.counterparty!! }.distinct()
-    return People.group(labels).map { group ->
+    // Payees matched to a phone contact are one person under the contact's saved name, whatever the bank spelling.
+    val byContact = labels.filter { it in snap.contactNames }.groupBy { snap.contactNames.getValue(it) }
+    val groups = byContact.map { (name, g) -> name to g } +
+        People.group(labels.filter { it !in snap.contactNames }).map { People.displayName(it) to it }
+    return groups.map { (name, group) ->
         val set = group.toSet()
         val rows = personal.filter { it.txn.parsed.counterparty in set }.sortedByDescending { it.txn.receivedAt }
-        Person(People.key(People.displayName(group)), People.displayName(group), group, rows)
+        Person(People.key(name), name, group, rows)
+    }.groupBy { it.key }.map { (k, ps) ->
+        // A contact and an unmatched spelling with the same name are one person.
+        if (ps.size == 1) ps[0] else Person(k, ps.first().name, ps.flatMap { it.labels }, ps.flatMap { it.rows }.sortedByDescending { it.txn.receivedAt })
     }.sortedByDescending { it.last }
 }
 
@@ -106,6 +113,10 @@ internal fun PeopleScreen(
     snap: Snapshot,
     onSettle: (com.girish.expensetracker.core.Debt) -> Unit = {},
     onGroup: (com.girish.expensetracker.data.FriendGroup?) -> Unit = {},
+    onReviewPayees: () -> Unit = {},
+    onDismissReview: () -> Unit = {},
+    onTheyPaid: () -> Unit = {},
+    onSettleIOwe: (com.girish.expensetracker.core.Debt) -> Unit = {},
     onOpen: (Person) -> Unit,
 ) {
     val t = LocalTones.current
@@ -145,12 +156,27 @@ internal fun PeopleScreen(
         item {
             StatGrid(
                 listOf(
-                    Stat("You paid people", rupees(paidMonth), sub = "this salary month", highlight = true),
-                    Stat("They paid you back", rupees(gotMonth), sub = "this salary month"),
+                    Stat("You paid people", rupees(paidMonth), sub = "this month", highlight = true),
+                    Stat("They paid you back", rupees(gotMonth), sub = "this month"),
                 ),
             )
         }
-        if (snap.debts.isNotEmpty()) item { OwedPanel(snap.debts, onSettle) }
+        if (snap.payeeReview.isNotEmpty() && query.isBlank()) item {
+            Panel {
+                PanelHeader("Shop or person?", "${snap.payeeReview.size}")
+                Text(
+                    "${count(snap.payeeReview.size, "payee")} aren't clearly a shop or a person, so they count as people for now. Tap once each; it's remembered.",
+                    style = MaterialTheme.typography.bodyMedium, color = t.ink2,
+                )
+                Gap(12.dp)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    PrimaryButton("Review", onReviewPayees)
+                    SecondaryButton("Not now", onDismissReview)
+                }
+            }
+        }
+        item { SecondaryButton("They paid for me", onTheyPaid, Modifier.fillMaxWidth()) }
+        if (snap.debts.isNotEmpty() || snap.iOwe.isNotEmpty()) item { OwedPanel(snap.debts, onSettle, snap.iOwe, onSettleIOwe) }
         if (all.isEmpty()) item {
             Panel { Text("No payments to people yet. UPI payments to a name appear here.", style = MaterialTheme.typography.bodyMedium, color = t.ink2) }
         }
@@ -202,9 +228,9 @@ private fun PeopleGroup(title: String, list: List<Person>, debts: List<com.giris
 // ---------------------------------------------------------------- detail
 
 @Composable
-internal fun PersonScreen(snap: Snapshot, person: Person, onBack: () -> Unit, onRow: (Row) -> Unit, onMarkShop: (Person) -> Unit) {
+internal fun PersonScreen(snap: Snapshot, person: Person, onBack: () -> Unit, onRow: (Row) -> Unit, onMarkShop: (Person) -> Unit, onTheyPaid: () -> Unit = {}) {
     val t = LocalTones.current
-    var range by remember { mutableStateOf(0) } // 0 this month, 1 last 3 salary months, 2 all time
+    var range by remember { mutableStateOf(0) } // 0 this month, 1 last 3 months, 2 all time
     val cycles = remember(snap) { Ledger.cycles(snap.today, snap.txns, 3) }
     val first = remember(person) { person.rows.minOf { it.txn.day } }
     val window: ClosedRange<LocalDate> = when (range) {
@@ -237,6 +263,20 @@ internal fun PersonScreen(snap: Snapshot, person: Person, onBack: () -> Unit, on
                         }
                     }
                 }
+            }
+        }
+        item {
+            // One netted balance with this person.
+            val owes = snap.debts.filter { d -> (d.label != null && d.label in person.labels) || People.same(d.name, person.name) }.sumOf { it.leftPaise }
+            val iOwe = snap.iOwe.filter { d -> (d.label != null && d.label in person.labels) || People.same(d.name, person.name) }.sumOf { it.leftPaise }
+            val net = owes - iOwe
+            Panel {
+                Text(
+                    when { net > 0 -> "${person.name} owes you ${rupees(net)}"; net < 0 -> "You owe ${person.name} ${rupees(-net)}"; else -> "All settled with ${person.name}" },
+                    style = MaterialTheme.typography.titleMedium, color = if (net < 0) t.warn else t.ink,
+                )
+                Gap(10.dp)
+                SecondaryButton("They paid for me", onTheyPaid, Modifier.fillMaxWidth())
             }
         }
         item { Segmented(listOf("This month", "3 months", "All time"), range, { range = it }) }
@@ -294,12 +334,12 @@ private fun PersonTxn(r: Row, onRow: (Row) -> Unit) {
     )
 }
 
-/** Paid vs paid back per salary month for this person (mint out, quiet grey in). */
+/** Paid vs paid back per month for this person (mint out, quiet grey in). */
 @Composable
 private fun PersonMonths(snap: Snapshot, person: Person, range: Int) {
     val t = LocalTones.current
     val first = person.rows.minOf { it.txn.day }
-    val all = Ledger.cycles(snap.today, snap.txns, 24).filter { it.endInclusive >= first }.reversed()
+    val all = Ledger.cyclesSince(snap.today, snap.txns, first).reversed()
     val cycles = when (range) {
         0 -> all.takeLast(1)
         1 -> all.takeLast(3)
@@ -310,7 +350,7 @@ private fun PersonMonths(snap: Snapshot, person: Person, range: Int) {
     val back = cycles.map { person.gotIn(it) }
     val max = (out + back).maxOrNull()?.coerceAtLeast(1L) ?: 1L
     Panel {
-        PanelHeader("By salary month", "${cycles.size}")
+        PanelHeader("By month", "${cycles.size}")
         Canvas(Modifier.fillMaxWidth().height(140.dp).semantics { contentDescription = "Paid and paid back per month with ${person.name}" }) {
             val slot = size.width / cycles.size
             val barW = minOf(slot * 0.28f, 18.dp.toPx())
@@ -375,10 +415,10 @@ private fun GroupsView(snap: Snapshot, all: List<Person>, onGroup: (com.girish.e
                 Gap(12.dp)
                 StatGrid(
                     listOf(
-                        Stat("You paid them", rupees(members.sumOf { it.paidIn(cycle) }), sub = "this salary month"),
+                        Stat("You paid them", rupees(members.sumOf { it.paidIn(cycle) }), sub = "this month"),
                         Stat(
                             if (owed > 0) "They owe you" else "They paid you", rupees(if (owed > 0) owed else members.sumOf { it.gotIn(cycle) }),
-                            sub = if (owed > 0) "from splits" else "this salary month", highlight = owed > 0,
+                            sub = if (owed > 0) "from splits" else "this month", highlight = owed > 0,
                         ),
                     ),
                 )

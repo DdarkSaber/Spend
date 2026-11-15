@@ -11,8 +11,8 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 /**
- * More → Export debug bundle: the audit log, a copy of the database and the app version in one zip, handed to the
- * share sheet. Only the owner sends it anywhere (for the validation report); it is never uploaded by the app.
+ * More → Export debug bundle: the audit log (bank alerts only, see [Audit.redact]), the payments the owner reported
+ * ([Issues]), a copy of the database and the app version in one zip, handed to the share sheet. Only the owner sends it anywhere (for the validation report); it is never uploaded by the app.
  */
 object DebugBundle {
 
@@ -28,7 +28,13 @@ object DebugBundle {
                 if (!file.exists()) return
                 out.putNextEntry(ZipEntry(name)); file.inputStream().use { it.copyTo(out) }; out.closeEntry()
             }
-            Audit.files(context).forEach { add("audit/${it.name}", it) }
+            // Lines logged by older versions held every SMS and notification in full: they are redacted on the way out.
+            Audit.files(context).forEach { f ->
+                out.putNextEntry(ZipEntry("audit/${f.name}"))
+                f.useLines { lines -> lines.filter { it.isNotBlank() }.forEach { out.write((Audit.redactLine(it) + "\n").toByteArray()) } }
+                out.closeEntry()
+            }
+            Issues.file(context)?.let { add("issues.jsonl", it) }
             add("spend.db", context.getDatabasePath("spend.db"))
             out.putNextEntry(ZipEntry("version.txt"))
             out.write(buildString {

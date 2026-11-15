@@ -4,7 +4,7 @@ import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import kotlin.math.abs
 
-/** One budget line for the salary month: the whole month (category null) or one category. */
+/** One budget line for the month: the whole month (category null) or one category. */
 data class BudgetLine(val category: String?, val limitPaise: Long, val spentPaise: Long, val projectedPaise: Long) {
     val share: Double get() = if (limitPaise <= 0) 0.0 else spentPaise.toDouble() / limitPaise
     val overPace: Boolean get() = projectedPaise > limitPaise
@@ -14,7 +14,7 @@ object Budgets {
 
     /**
      * Spent so far and where the month is heading. Recurring money (SIPs, subscriptions, lump sums) is counted as it
-     * is, not projected; day-to-day spend is extended at its current daily rate to the end of the salary month.
+     * is, not projected; day-to-day spend is extended at its current daily rate to the end of the month.
      */
     fun lines(
         txns: List<Txn>,
@@ -156,7 +156,7 @@ object Alerts {
         buildList {
             when {
                 b.share >= 1.0 -> add(Alert("budget100|$id", "$what is over budget", "${money(b.spentPaise)} spent of ${money(b.limitPaise)}."))
-                b.share >= 0.8 -> add(Alert("budget80|$id", "$what is at ${(b.share * 100).toInt()}% of budget", "${money(b.limitPaise - b.spentPaise)} left for the rest of the salary month."))
+                b.share >= 0.8 -> add(Alert("budget80|$id", "$what is at ${(b.share * 100).toInt()}% of budget", "${money(b.limitPaise - b.spentPaise)} left for the rest of the month."))
                 b.overPace && b.share >= 0.5 -> add(Alert("pace|$id", "$what is ahead of pace", "Heading for ${money(b.projectedPaise)} against a budget of ${money(b.limitPaise)}."))
             }
         }

@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -112,9 +113,13 @@ internal fun RowSheet(
     onRetag: (PayeeType, String, Boolean) -> Unit,
     onDeleteCash: (Long) -> Unit,
     onSplit: () -> Unit,
+    onShop: (() -> Unit)? = null,
+    onAssignCredit: (() -> Unit)? = null,
+    onNotSpend: (() -> Unit)? = null,
     tag: String? = null,
     knownTags: List<String> = emptyList(),
     onTag: (String) -> Unit = {},
+    onReport: ((String) -> Unit)? = null,
 ) {
     val t = LocalTones.current
     val x = row.txn
@@ -128,16 +133,40 @@ internal fun RowSheet(
         LazyColumn(contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
                 Text(x.parsed.counterparty ?: x.category, style = MaterialTheme.typography.headlineSmall, color = t.ink, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                onShop?.let { open ->
+                    Text(
+                        "All payments at ${com.girish.expensetracker.core.Brands.canonical(x.parsed.counterparty.orEmpty())} ›", style = MaterialTheme.typography.labelLarge, color = t.accent,
+                        modifier = Modifier.clickable(onClick = open).padding(vertical = 4.dp),
+                    )
+                }
                 Text(rupeesExact(x.amountPaise), style = MaterialTheme.typography.displaySmall.copy(fontFeatureSettings = "tnum"), color = t.ink)
                 Text(
                     "${x.kind.name.lowercase().replace('_', ' ').replaceFirstChar { it.uppercase() }} · ${sourceLabel(x.parsed.source)} · ${x.day.format(dayMonth)}, ${x.receivedAt.toLocalTime().withSecond(0).withNano(0)}",
                     style = MaterialTheme.typography.bodyMedium, color = t.ink2,
                 )
+                onAssignCredit?.let { open ->
+                    Text(
+                        "Paid on behalf of someone? ›", style = MaterialTheme.typography.labelLarge, color = t.accent,
+                        modifier = Modifier.clickable(onClick = open).padding(vertical = 4.dp),
+                    )
+                }
+                x.owedTo?.let { o ->
+                    Text("Paid by ${o.name} · you owe them", style = MaterialTheme.typography.bodyMedium, color = t.warn, modifier = Modifier.padding(top = 4.dp))
+                }
+                if (x.settlesPaise > 0) {
+                    Text("${rupeesExact(x.settlesPaise)} of this paid back what you owed", style = MaterialTheme.typography.bodyMedium, color = t.accent, modifier = Modifier.padding(top = 4.dp))
+                }
                 if (x.splitWith.isNotEmpty()) {
                     Text(
                         "Split with ${x.splitWith.joinToString { it.name }} · your share ${rupeesExact(x.ownPaise)}",
                         style = MaterialTheme.typography.bodyMedium, color = t.accent, modifier = Modifier.padding(top = 4.dp),
                     )
+                }
+            }
+            onNotSpend?.let { hide ->
+                item {
+                    SecondaryButton("Not a spend (offer or spam)", hide, Modifier.fillMaxWidth())
+                    Text("Removes it from every total. Undo in More → Hidden payments.", style = MaterialTheme.typography.bodySmall, color = t.ink2, modifier = Modifier.padding(top = 4.dp))
                 }
             }
             if (canSplit) item {
@@ -172,6 +201,20 @@ internal fun RowSheet(
                 item { Gap(4.dp); Text("Original SMS", style = MaterialTheme.typography.titleSmall, color = t.ink) }
                 item { Text(body, style = MaterialTheme.typography.bodySmall, color = t.ink2) }
             }
+            onReport?.let { report ->
+                item {
+                    Gap(4.dp)
+                    Text("Something wrong with this one?", style = MaterialTheme.typography.titleSmall, color = t.ink)
+                    Text("Tap what's wrong. It is saved for the next debug bundle; nothing changes in your totals.", style = MaterialTheme.typography.bodySmall, color = t.ink2)
+                }
+                item {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        com.girish.expensetracker.data.Issues.REASONS.forEach { r ->
+                            FilterChip(false, { report(r) }, { Text(r) }, colors = chipColors(), border = chipBorder(false))
+                        }
+                    }
+                }
+            }
             row.manualId?.let { id ->
                 // Destructive action kept apart from everything else on the sheet.
                 item { Gap(24.dp) }
@@ -192,11 +235,16 @@ internal fun RowSheet(
 }
 
 @Composable
-internal fun AddCashSheet(onDismiss: () -> Unit, onSave: (LocalDate, Long, String, String) -> Unit) {
+internal fun AddCashSheet(
+    onDismiss: () -> Unit,
+    /** A foreign-currency card charge: entered in rupees on the day it was charged, no Today/Yesterday choice. */
+    foreign: com.girish.expensetracker.core.Unusual? = null,
+    onSave: (LocalDate, Long, String, String) -> Unit,
+) {
     val t = LocalTones.current
     var amount by remember { mutableStateOf("") }
-    var note by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf("Food") }
+    var note by remember { mutableStateOf(foreign?.title?.removePrefix("Foreign charge: ")?.let { "Foreign charge $it" } ?: "") }
+    var category by remember { mutableStateOf(if (foreign != null) "Shopping" else "Food") }
     var yesterday by remember { mutableStateOf(false) }
     val paise = amount.toBigDecimalOrNull()?.movePointRight(2)?.toLong()
     val fieldColors = OutlinedTextFieldDefaults.colors(
@@ -206,7 +254,11 @@ internal fun AddCashSheet(onDismiss: () -> Unit, onSave: (LocalDate, Long, Strin
 
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = t.panel) {
         LazyColumn(contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 32.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            item { Text("Cash spend", style = MaterialTheme.typography.headlineSmall, color = t.ink) }
+            item { Text(if (foreign != null) "Foreign charge in ₹" else "Cash spend", style = MaterialTheme.typography.headlineSmall, color = t.ink) }
+            if (foreign != null) item {
+                Text("Enter what it cost in rupees (from the bank app or statement). It counts as spend on ${foreign.day}.",
+                    style = MaterialTheme.typography.bodySmall, color = t.ink2)
+            }
             item {
                 OutlinedTextField(
                     value = amount, onValueChange = { amount = it.filter { c -> c.isDigit() || c == '.' } },
@@ -220,7 +272,7 @@ internal fun AddCashSheet(onDismiss: () -> Unit, onSave: (LocalDate, Long, Strin
                 OutlinedTextField(value = note, onValueChange = { note = it }, label = { Text("What for (optional)") }, singleLine = true,
                     modifier = Modifier.fillMaxWidth(), colors = fieldColors, shape = RoundedCornerShape(10.dp))
             }
-            item { Segmented(listOf("Today", "Yesterday"), if (yesterday) 1 else 0, { yesterday = it == 1 }) }
+            if (foreign == null) item { Segmented(listOf("Today", "Yesterday"), if (yesterday) 1 else 0, { yesterday = it == 1 }) }
             item {
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     CATEGORIES.forEach { c -> FilterChip(category == c, { category = c }, { Text(c) }, colors = chipColors(), border = chipBorder(category == c)) }
@@ -228,8 +280,8 @@ internal fun AddCashSheet(onDismiss: () -> Unit, onSave: (LocalDate, Long, Strin
             }
             item {
                 PrimaryButton(
-                    "Add cash spend",
-                    { onSave(LocalDate.now().minusDays(if (yesterday) 1 else 0), paise!!, note.ifBlank { "Cash" }, category) },
+                    if (foreign != null) "Add in ₹" else "Add cash spend",
+                    { onSave(foreign?.day ?: LocalDate.now().minusDays(if (yesterday) 1 else 0), paise!!, note.ifBlank { "Cash" }, category) },
                     enabled = paise != null && paise > 0,
                 )
             }

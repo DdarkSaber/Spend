@@ -5,7 +5,7 @@ import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import kotlin.math.abs
 
-/** A cost that comes every salary month (rent, maid, electricity, SIP, subscriptions): learned, never typed in. */
+/** A cost that comes every month (rent, maid, electricity, SIP, subscriptions): learned, never typed in. */
 data class FixedCost(val key: String, val name: String, val category: String, val typicalPaise: Long, val usualDay: Int)
 
 object FixedCosts {
@@ -16,7 +16,7 @@ object FixedCosts {
     fun key(t: Txn): String = normalizeName(t.parsed.counterparty ?: t.parsed.narration ?: "").take(14)
 
     /**
-     * Learned from the last three finished salary months: a payee paid in at least two of them, about once a month,
+     * Learned from the last three finished months: a payee paid in at least two of them, about once a month,
      * a similar amount each time (within 25%) and at least ₹300, in a bill-like category or as a SIP / subscription.
      */
     fun find(txns: List<Txn>, finished: List<ClosedRange<LocalDate>>): List<FixedCost> {
@@ -50,7 +50,7 @@ object FixedCosts {
     }
 }
 
-/** Where the running salary month is heading: fixed costs (paid and still to come) plus everyday spending at its pace. */
+/** Where the running month is heading: fixed costs (paid and still to come) plus everyday spending at its pace. */
 data class Forecast(
     val totalPaise: Long,
     val fixedPaise: Long,

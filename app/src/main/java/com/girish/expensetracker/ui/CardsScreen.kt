@@ -69,11 +69,27 @@ internal fun CardsScreen(
             CardGroupSuggestions(snap.cardGroupSuggestions, snap.likelyShared, onGroupCards, onDeclineGroup)
         }
         if (view == 0) snap.cards.forEach { h -> item(key = "health-${h.card.bank}-${h.card.last4}") { CardHealthPanel(h, { onCardSettings(h) }, { paid -> onMarkPaid(h, paid) }) } }
+        // SBI Card sends about a third of its spend alerts only by email: say so until Gmail alerts are being read.
+        if (view == 0 && snap.trackedCards.any { it.bank == "SBI" }) item(key = "sbi-coverage") {
+            val context = androidx.compose.ui.platform.LocalContext.current
+            val gmailReading = remember(snap) {
+                runCatching {
+                    val repo = (context.applicationContext as com.girish.expensetracker.SpendApp).repo
+                    repo.alertApps().any { it.pkg == com.girish.expensetracker.notify.AlertListener.GMAIL && it.enabled } &&
+                        repo.store.setting(com.girish.expensetracker.data.KEY_LAST_ALERT + com.girish.expensetracker.notify.AlertListener.GMAIL) != null
+                }.getOrDefault(false)
+            }
+            if (!gmailReading) Panel {
+                PanelHeader("SBI Card may be under-counted")
+                Text("About a third of SBI Card spends come only as email. Until Gmail alerts are read (Alert apps → Gmail on, and Sensitive alerts allowed), this card's spend and balance can be low.",
+                    style = MaterialTheme.typography.bodySmall, color = LocalTones.current.ink2)
+            }
+        }
         item(key = "spend") {
             Panel(padding = PaddingValues(start = 18.dp, end = 18.dp, top = 8.dp, bottom = 8.dp)) {
                 if (bySource.isEmpty()) {
                     Text(
-                        if (view == 0) "No card spends this salary month." else "No UPI or debit spends this salary month.",
+                        if (view == 0) "No card spends this month." else "No UPI or debit spends this month.",
                         style = MaterialTheme.typography.bodyMedium, color = t.ink2, modifier = Modifier.padding(vertical = 14.dp),
                     )
                 }

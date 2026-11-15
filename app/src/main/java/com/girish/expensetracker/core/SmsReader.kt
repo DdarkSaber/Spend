@@ -81,6 +81,9 @@ object SmsReader {
     /** Every bank the reader knows, by its short name. */
     val banks: Set<String> get() = bankCodes.values.toSet()
 
+    /** True for any DLT sender header ("VM-HDFCBK-S", "AX-AMAZON-P"), bank or not: the title of an SMS notification. */
+    fun isSenderHeader(text: String): Boolean = dltHeader.matches(text.trim())
+
     fun bankOf(sender: String): String? =
         dltHeader.matchEntire(sender.trim())?.groupValues?.get(1)?.uppercase()?.let { bankCodes[it] }
 
@@ -109,6 +112,8 @@ object SmsReader {
         RegexOption.IGNORE_CASE,
     )
 
+    private val emailSentence = Regex("Rs\\.?\\s?[\\d,.]+ spent on your SBI Credit Card ending", RegexOption.IGNORE_CASE)
+
     fun read(sender: String, body: String, profile: Profile, learned: List<LearnedLayout> = emptyList()): ReadResult {
         val header = dltHeader.matchEntire(sender.trim()) ?: return ReadResult.NotBank
         val entity = header.groupValues[1].uppercase()
@@ -116,7 +121,9 @@ object SmsReader {
         val bank = bankCodes[entity] ?: return ReadResult.NotBank
         if (type == "P") return ReadResult.Promo
 
-        val text = body.replace(Regex("\\s+"), " ").trim()
+        var text = body.replace(Regex("\\s+"), " ").trim()
+        // A bank email read from its notification starts with the subject and a greeting: read from the sentence itself.
+        if (sender.startsWith("NT-")) emailSentence.find(text)?.let { text = text.substring(it.range.first) }
         val lower = text.lowercase()
         if (informationalPhrases.any { it in lower }) return ReadResult.Informational
 
@@ -129,7 +136,13 @@ object SmsReader {
             )?.let { p -> withOnlySource(p, profile) }
         // Offer and scam wording is never a transaction, however money-like it reads ("Rs.60,000 credited to your
         // pre-approved loan"). Exact layouts can't match such text; the generic rules are stopped here.
-        if (parsed != null && parsed.template.name.startsWith("GENERIC") && promoPhrases.any { it in lower }) return ReadResult.Promo
+        // The payee's own name is left out of that check: "...to LUCKY RESTAURANT" is a real payment.
+        if (parsed != null && parsed.template.name.startsWith("GENERIC")) {
+            val rest = parsed.counterparty?.trim()?.lowercase()?.takeIf { it.length >= 3 }?.let { lower.replace(it, " ") } ?: lower
+            if (promoPhrases.any { it in rest }) return ReadResult.Promo
+        }
+        // A notification rebuilt as a card spend "at AX-SBICRD-P": the "merchant" is an SMS sender, so it was an offer.
+        if (parsed?.counterparty?.let { dltHeader.matches(it.trim()) } == true) return ReadResult.Promo
         if (parsed == null) {
             if (promoPhrases.any { it in lower }) return ReadResult.Promo
             // OTPs, requests and reminders mention money but move none: never shown as "couldn't read".
@@ -170,6 +183,16 @@ internal object Layouts {
         // PAYMENT ALERT! INR 9000.00 deducted from HDFC Bank A/C No 1234 towards Indian Clearing Corporation Lt UMRN: ...
         Layout(Regex("^PAYMENT ALERT! INR $AMT deducted from HDFC Bank A/C No (\\d{4}) towards (.+?) UMRN", I)) { m ->
             ParsedSms(Template.HDFC_ACH_ALERT, Direction.DEBIT, paise(m[1]), acct("HDFC", m[2]), m[3].trim(), null, null, m[3].trim())
+        },
+        // INR 5000.00 debited to HDFC Bank A/C No XXXXXXXXXX1234 towards Indian Clearing Corporation Ltd / 0075433023 with UMRN ...
+        // (the 2024 wording of PAYMENT ALERT: the same debit as its UPDATE SMS)
+        Layout(Regex("^INR $AMT debited to HDFC Bank A/C No X*(\\d{4}) towards (.+?)(?: / \\d+)? with UMRN", I)) { m ->
+            ParsedSms(Template.HDFC_ACH_ALERT, Direction.DEBIT, paise(m[1]), acct("HDFC", m[2]), m[3].trim(), null, null, m[3].trim())
+        },
+        // HDFC email: Rs.1.00 is debited from your account ending 1234 towards VPA ****@slc (Groww) on 12-11-26. UPI transaction reference no.: 100000000001
+        // (same reference as the SMS, so the two are read once)
+        Layout(Regex("Rs\\.?\\s?$AMT is debited from your account ending (\\d{4}) towards VPA \\S+ \\((.+?)\\) on (\\d{2}-\\d{2}-\\d{2})\\. UPI transaction reference no\\.?:? ?(\\d+)", I)) { m ->
+            ParsedSms(Template.HDFC_UPI_SENT, Direction.DEBIT, paise(m[1]), acct("HDFC", m[2]), m[3], Dates.parse(m[4]), m[5], null)
         },
         // Spent Rs.585 On HDFC Bank Card 4321 At ..PVR LIMITED_ On 2026-08-19:00:16:16.
         Layout(Regex("^Spent Rs\\.?$AMT On HDFC Bank Card (\\d{4}) At (.+?) On (\\d{4}-\\d{2}-\\d{2})", I)) { m ->
@@ -218,6 +241,10 @@ internal object Layouts {
         // Rs.723.08 spent on your SBI Credit Card ending 1111 at ZOMATO on 03/08/26.
         Layout(Regex("^Rs\\.?$AMT spent on your SBI Credit Card ending (\\d{4}) at (.+?) on (\\d{2}/\\d{2}/\\d{2})", I)) { m ->
             ParsedSms(Template.SBI_CARD_SPENT, Direction.DEBIT, paise(m[1]), card("SBI", m[2]), cleanMerchant(m[3]), Dates.parse(m[4]), null, null)
+        },
+        // Truecaller's SBI Card transaction card rebuilt without the card's digits (see TxnCard).
+        Layout(Regex("^Rs\\.?$AMT spent on your SBI Credit Card at (.+?) on (\\d{2}/\\d{2}/\\d{2})", I)) { m ->
+            ParsedSms(Template.SBI_CARD_SPENT, Direction.DEBIT, paise(m[1]), Source("SBI", UNASSIGNED, SourceType.CARD), cleanMerchant(m[2]), Dates.parse(m[3]), null, null)
         },
         // Dear SBI Cardholder, payment of Rs. 27951.76 for your SBI Credit Card has been successfully processed. ref no : EKT53GV1Z4WTSX.
         Layout(Regex("payment of Rs\\.? ?$AMT for your SBI Credit Card has been successfully processed\\.?(?: ref no ?: ?(\\w+))?", I)) { m ->

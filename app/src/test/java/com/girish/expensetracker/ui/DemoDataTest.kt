@@ -13,7 +13,7 @@ class DemoDataTest {
         assertEquals(1, s.newSources.size)
         assertTrue(s.todayTotal > 0)
         assertTrue(s.monthTotal > s.todayTotal)
-        assertEquals(LocalDate.of(2026, 9, 28), s.cycleStart)
+        assertEquals(LocalDate.of(2026, 10, 1), s.cycleStart)
         println("demo: rows=${s.rows.size} today=${rupees(s.todayTotal)} month=${rupees(s.monthTotal)}")
     }
 }

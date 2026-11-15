@@ -20,8 +20,12 @@ data class RawSms(val id: Long, val sender: String, val body: String, val receiv
 const val CHANNEL_SMS = "sms"
 
 /** Database schema version; a backup from a newer schema is refused. */
-const val STORE_VERSION = 6
-data class ManualEntry(val id: Long, val day: LocalDate, val amountPaise: Long, val note: String, val category: String, val createdAt: Long)
+const val STORE_VERSION = 7
+data class ManualEntry(
+    val id: Long, val day: LocalDate, val amountPaise: Long, val note: String, val category: String, val createdAt: Long,
+    /** "They paid for me": who paid (name, and how they appear in bank SMS when picked from People). */
+    val owedTo: String? = null, val owedLabel: String? = null,
+)
 data class StatementRow(val day: LocalDate, val amountPaise: Long, val debit: Boolean, val description: String)
 
 /**
@@ -47,6 +51,7 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, STOR
         createStatementRows(db)
         createV5(db)
         createV6(db)
+        createV7(db)
     }
 
     // v2 adds owner settings; nothing existing is touched, so an upgrade keeps every stored SMS, retag and cash entry.
@@ -59,6 +64,18 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, STOR
             db.execSQL("ALTER TABLE sms ADD COLUMN channel TEXT NOT NULL DEFAULT 'sms'")
             createV6(db)
         }
+        if (oldVersion < 7) createV7(db)
+    }
+
+    /** v7: who paid a hand-entered spend for the owner ("They paid for me"); existing rows keep NULL (plain cash). */
+    private fun createV7(db: SQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS manual (id INTEGER PRIMARY KEY AUTOINCREMENT, day TEXT NOT NULL, amount INTEGER NOT NULL, " +
+                "note TEXT NOT NULL, category TEXT NOT NULL, created_at INTEGER NOT NULL)"
+        )
+        val cols = db.rawQuery("PRAGMA table_info(manual)", null).use { c -> buildSet { while (c.moveToNext()) add(c.getString(1)) } }
+        if ("owed_to" !in cols) db.execSQL("ALTER TABLE manual ADD COLUMN owed_to TEXT")
+        if ("owed_label" !in cols) db.execSQL("ALTER TABLE manual ADD COLUMN owed_label TEXT")
     }
 
     /**
@@ -124,6 +141,24 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, STOR
         db.delete("notif_seen", "at < ?", arrayOf((at - 7 * 24 * 3600_000L).toString()))
         val v = ContentValues().apply { put("hash", hash); put("at", at) }
         return db.insertWithOnConflict("notif_seen", null, v, SQLiteDatabase.CONFLICT_IGNORE) != -1L
+    }
+
+    /** True when [hash] was recorded by [firstSeen] in the last 7 days. */
+    fun seen(hash: String): Boolean =
+        readableDatabase.rawQuery("SELECT 1 FROM notif_seen WHERE hash = ? LIMIT 1", arrayOf(hash)).use { it.moveToFirst() }
+
+    /**
+     * Removes notification copies of [body] stored within 10 minutes of [at]: the SMS itself was just turned away
+     * (not a bank sender, or an offer), so its notification must not count either. Returns how many were removed.
+     */
+    fun dropNotifCopies(body: String, at: Long): Int {
+        val norm = com.girish.expensetracker.core.SameText.normalize(body)
+        val ids = readableDatabase.rawQuery(
+            "SELECT id, body FROM sms WHERE received_at > ? AND received_at < ? AND channel LIKE 'notif:%'",
+            arrayOf((at - 600_000L).toString(), (at + 600_000L).toString()),
+        ).use { c -> buildList { while (c.moveToNext()) if (com.girish.expensetracker.core.SameText.normalize(c.getString(1)) == norm) add(c.getLong(0)) } }
+        ids.forEach { writableDatabase.delete("sms", "id = ?", arrayOf(it.toString())) }
+        return ids.size
     }
 
     /** True when an alert with the same normalized text came on another channel within 24 hours. */
@@ -363,6 +398,11 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, STOR
             }
         }
 
+    /** When the newest SMS (not a notification copy) was received; null when none is stored. */
+    fun newestSmsMillis(): Long? = readableDatabase.rawQuery("SELECT MAX(received_at) FROM sms WHERE channel = 'sms'", null).use { c ->
+        if (c.moveToFirst() && !c.isNull(0)) c.getLong(0) else null
+    }
+
     fun setting(key: String): String? =
         readableDatabase.rawQuery("SELECT value FROM settings WHERE key = ?", arrayOf(key)).use { c -> if (c.moveToFirst()) c.getString(0) else null }
 
@@ -426,8 +466,10 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, STOR
         writableDatabase.insertWithOnConflict("rule", null, v, SQLiteDatabase.CONFLICT_REPLACE)
     }
 
-    fun addManual(day: LocalDate, amountPaise: Long, note: String, category: String) {
+    fun addManual(day: LocalDate, amountPaise: Long, note: String, category: String, owedTo: String? = null, owedLabel: String? = null) {
         val v = ContentValues().apply {
+            owedTo?.let { put("owed_to", it) }
+            owedLabel?.let { put("owed_label", it) }
             put("day", day.toString())
             put("amount", amountPaise)
             put("note", note)
@@ -443,12 +485,12 @@ class Store(context: Context) : SQLiteOpenHelper(context, "spend.db", null, STOR
 
     fun manualSince(since: LocalDate): List<ManualEntry> =
         readableDatabase.rawQuery(
-            "SELECT id, day, amount, note, category, created_at FROM manual WHERE day >= ? ORDER BY day, id",
+            "SELECT id, day, amount, note, category, created_at, owed_to, owed_label FROM manual WHERE day >= ? ORDER BY day, id",
             arrayOf(since.toString()),
         ).use { c ->
             buildList {
                 while (c.moveToNext()) {
-                    add(ManualEntry(c.getLong(0), LocalDate.parse(c.getString(1)), c.getLong(2), c.getString(3), c.getString(4), c.getLong(5)))
+                    add(ManualEntry(c.getLong(0), LocalDate.parse(c.getString(1)), c.getLong(2), c.getString(3), c.getString(4), c.getLong(5), c.getString(6), c.getString(7)))
                 }
             }
         }
